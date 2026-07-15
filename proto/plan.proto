@@ -1,0 +1,87 @@
+syntax = "proto3";
+package atlas.plan;
+
+// Every query — whether it arrives as SQL or natural language — is converted
+// into this shape before touching the optimizer. See
+// docs/atlas-implementation-spec.md §1.1 for rationale. Not yet compiled;
+// Phase 1 consumes a hand-written Rust equivalent in engine/crates/atlas-query.
+// Wire up prost/grpcio-tools codegen from this file once a second language
+// (Go in Phase 2, Python in Phase 6) needs to produce or consume LogicalPlan.
+
+message LogicalPlan {
+  oneof node {
+    ScanNode scan = 1;
+    FilterNode filter = 2;
+    ProjectNode project = 3;
+    AggregateNode aggregate = 4;
+    SortNode sort = 5;
+    LimitNode limit = 6;
+    JoinNode join = 7;         // Phase 4+
+  }
+}
+
+message ScanNode {
+  string dataset = 1;
+  repeated string columns = 2;   // empty = all columns; populated by column pruning
+  string snapshot_id = 3;        // optional, empty = current snapshot
+}
+
+message FilterNode {
+  LogicalPlan input = 1;
+  Expr predicate = 2;
+}
+
+message ProjectNode {
+  LogicalPlan input = 1;
+  repeated Expr exprs = 2;
+  repeated string aliases = 3;
+}
+
+message AggregateNode {
+  LogicalPlan input = 1;
+  repeated Expr group_by = 2;
+  repeated AggExpr aggregates = 3;
+}
+
+message AggExpr {
+  enum Fn { COUNT = 0; SUM = 1; AVG = 2; MIN = 3; MAX = 4; }
+  Fn fn = 1;
+  Expr arg = 2;
+  string alias = 3;
+}
+
+message SortNode {
+  LogicalPlan input = 1;
+  repeated SortKey keys = 2;
+}
+message SortKey { Expr expr = 1; bool descending = 2; }
+
+message LimitNode {
+  LogicalPlan input = 1;
+  uint64 n = 2;
+}
+
+message JoinNode {
+  LogicalPlan left = 1;
+  LogicalPlan right = 2;
+  enum JoinType { INNER = 0; LEFT = 1; RIGHT = 2; FULL = 3; }
+  JoinType join_type = 3;
+  Expr on = 4;
+}
+
+message Expr {
+  oneof kind {
+    string column_ref = 1;
+    Literal literal = 2;
+    BinaryExpr binary = 3;
+  }
+}
+message Literal {
+  oneof value { int64 int_val = 1; double float_val = 2; string str_val = 3; bool bool_val = 4; }
+}
+message BinaryExpr {
+  enum Op { EQ=0; NEQ=1; LT=2; LTE=3; GT=4; GTE=5; AND=6; OR=7; ADD=8; SUB=9; MUL=10; DIV=11; }
+  Op op = 1;
+  Expr left = 2;
+  Expr right = 3;
+}

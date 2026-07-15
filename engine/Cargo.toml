@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/atlas-format",
+    "crates/atlas-storage",
+    "crates/atlas-query",
+    "crates/atlas-exec",
+    "crates/atlas-cli",
+]
+
+[workspace.package]
+edition = "2021"
+publish = false
+
+[workspace.dependencies]
+arrow = "53"
+arrow-csv = "53"
+csv = "1"
+sqlparser = "0.51"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+thiserror = "1"
