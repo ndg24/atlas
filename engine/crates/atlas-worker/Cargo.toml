@@ -1,0 +1,26 @@
+[package]
+name = "atlas-worker"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+arrow = { workspace = true, features = ["ipc"] }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = "0.1"
+tonic = { workspace = true }
+prost = { workspace = true }
+serde_json = { workspace = true }
+atlas-format = { path = "../atlas-format" }
+atlas-query = { path = "../atlas-query" }
+atlas-exec = { path = "../atlas-exec" }
+
+[build-dependencies]
+tonic-build = { workspace = true }
+protoc-bin-vendored = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

@@ -6,6 +6,7 @@ members = [
     "crates/atlas-query",
     "crates/atlas-exec",
     "crates/atlas-cli",
+    "crates/atlas-worker",
 ]
 
 [workspace.package]
@@ -33,3 +34,4 @@ object_store = "0.11"
 bytes = "1"
 uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["json"] }

@@ -1,0 +1,6 @@
+.git
+engine/target
+coordinator/**/*.exe
+dashboard/node_modules
+dashboard/.next
+**/*.md

@@ -32,6 +32,78 @@ services:
       timeout: 5s
       retries: 10
 
+  catalog:
+    build:
+      context: ..
+      dockerfile: coordinator/Dockerfile
+    entrypoint: ["/usr/local/bin/catalog"]
+    environment:
+      DATABASE_URL: postgres://atlas:atlas@postgres:5432/atlas
+      CATALOG_ADDR: ":9091"
+    ports:
+      - "9091:9091"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Three explicit worker services (rather than one service scaled via
+  # `deploy.replicas`) so the coordinator's WORKER_ADDRS lists distinct,
+  # individually heartbeat-tracked addresses — a scaled service's shared DNS
+  # name would round-robin instead, defeating per-worker liveness tracking.
+  #
+  # `data` is a shared volume so `.atlas` files ingested at the same
+  # container-visible path are readable by every worker. When ingesting from
+  # the host with a native (non-Docker) `atlas-cli`, point `--data-dir` at
+  # this same bind-mounted host directory (./data) so the paths committed to
+  # the catalog resolve inside these containers too.
+  worker-1:
+    build:
+      context: ..
+      dockerfile: engine/Dockerfile
+    command: ["--addr", "0.0.0.0:9100"]
+    volumes:
+      - ./data:/data
+    expose:
+      - "9100"
+
+  worker-2:
+    build:
+      context: ..
+      dockerfile: engine/Dockerfile
+    command: ["--addr", "0.0.0.0:9100"]
+    volumes:
+      - ./data:/data
+    expose:
+      - "9100"
+
+  worker-3:
+    build:
+      context: ..
+      dockerfile: engine/Dockerfile
+    command: ["--addr", "0.0.0.0:9100"]
+    volumes:
+      - ./data:/data
+    expose:
+      - "9100"
+
+  coordinator:
+    build:
+      context: ..
+      dockerfile: coordinator/Dockerfile
+    entrypoint: ["/usr/local/bin/coordinator"]
+    environment:
+      DATABASE_URL: postgres://atlas:atlas@postgres:5432/atlas
+      CATALOG_ADDR: "catalog:9091"
+      COORDINATOR_ADDR: ":8080"
+      WORKER_ADDRS: "worker-1:9100,worker-2:9100,worker-3:9100"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - catalog
+      - worker-1
+      - worker-2
+      - worker-3
+
 volumes:
   postgres-data:
   minio-data:

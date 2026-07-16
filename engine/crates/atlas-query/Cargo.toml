@@ -7,4 +7,5 @@ publish.workspace = true
 [dependencies]
 sqlparser = { workspace = true }
 anyhow = { workspace = true }
+serde = { workspace = true }
 atlas-format = { path = "../atlas-format" }

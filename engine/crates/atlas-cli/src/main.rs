@@ -9,12 +9,10 @@ use clap::{Parser, Subcommand};
 mod catalog_pb;
 
 use catalog_pb::catalog_service_client::CatalogServiceClient;
-use catalog_pb::{
-    CommitSnapshotRequest, CreateDatasetRequest, GetDatasetRequest, GetSnapshotRequest,
-    ListManifestsRequest, ManifestInput,
-};
+use catalog_pb::{CommitSnapshotRequest, CreateDatasetRequest, GetDatasetRequest, ManifestInput};
 
 const DEFAULT_CATALOG_ADDR: &str = "http://127.0.0.1:9091";
+const DEFAULT_COORDINATOR_ADDR: &str = "http://127.0.0.1:8080";
 
 #[derive(Parser)]
 #[command(name = "atlas-cli")]
@@ -30,13 +28,16 @@ enum Command {
         /// Query a CSV file directly, no catalog involved (Phase 1 path).
         #[arg(long, conflicts_with = "dataset")]
         file: Option<PathBuf>,
-        /// Query the current snapshot of a catalog-registered dataset.
+        /// Query the current snapshot of a catalog-registered dataset —
+        /// submitted to the coordinator's REST API, which fans it out across
+        /// workers and merges the result (Phase 3); the CLI no longer
+        /// executes catalog-backed queries itself.
         #[arg(long, conflicts_with = "file")]
         dataset: Option<String>,
         #[arg(long)]
         sql: String,
-        #[arg(long, default_value = DEFAULT_CATALOG_ADDR)]
-        catalog_addr: String,
+        #[arg(long, default_value = DEFAULT_COORDINATOR_ADDR)]
+        coordinator_addr: String,
     },
     /// Ingest a CSV file into a dataset: write `.atlas` file(s) and commit a
     /// new snapshot to the catalog.
@@ -66,9 +67,9 @@ async fn main() -> Result<()> {
         Command::Query {
             dataset: Some(dataset),
             sql,
-            catalog_addr,
+            coordinator_addr,
             ..
-        } => run_query_dataset(&dataset, &sql, &catalog_addr).await,
+        } => run_query_dataset(&dataset, &sql, &coordinator_addr).await,
         Command::Query { .. } => bail!("query requires exactly one of --file or --dataset"),
         Command::Ingest {
             file,
@@ -93,56 +94,64 @@ fn run_query_file(file: &Path, sql: &str) -> Result<()> {
     Ok(())
 }
 
-async fn run_query_dataset(dataset: &str, sql: &str, catalog_addr: &str) -> Result<()> {
-    let mut client = connect(catalog_addr).await?;
+#[derive(serde::Deserialize)]
+struct QueryResponse {
+    #[serde(default)]
+    #[allow(dead_code)]
+    query_id: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    duration_ms: i64,
+    arrow_ipc_batches: Vec<String>,
+}
 
-    let ds = client
-        .get_dataset(GetDatasetRequest {
-            name: dataset.to_string(),
-        })
-        .await
-        .with_context(|| format!("looking up dataset '{dataset}'"))?
-        .into_inner();
-    if ds.current_snapshot_id.is_empty() {
-        bail!("dataset '{dataset}' has no committed snapshot yet — run `ingest` first");
-    }
-    let schema: atlas_format::Schema =
-        serde_json::from_str(&ds.schema_json).context("parsing dataset schema from catalog")?;
+#[derive(serde::Deserialize)]
+struct ErrorResponse {
+    error: String,
+}
 
-    let snapshot = client
-        .get_current_snapshot(GetSnapshotRequest {
-            dataset_name: dataset.to_string(),
-        })
+async fn run_query_dataset(dataset: &str, sql: &str, coordinator_addr: &str) -> Result<()> {
+    let http = reqwest::Client::new();
+    let resp = http
+        .post(format!("{coordinator_addr}/query"))
+        .json(&serde_json::json!({ "dataset": dataset, "sql": sql }))
+        .send()
         .await
-        .context("fetching current snapshot")?
-        .into_inner();
+        .with_context(|| format!("calling coordinator at {coordinator_addr}"))?;
 
-    let manifests = client
-        .list_manifests(ListManifestsRequest {
-            snapshot_id: snapshot.id,
-        })
-        .await
-        .context("listing manifests")?
-        .into_inner()
-        .manifests;
-    if manifests.is_empty() {
-        bail!("dataset '{dataset}' snapshot has no manifests");
+    let status = resp.status();
+    if !status.is_success() {
+        let body: Result<ErrorResponse, _> = resp.json().await;
+        match body {
+            Ok(err) => bail!("coordinator returned {status}: {}", err.error),
+            Err(_) => bail!("coordinator returned {status}"),
+        }
     }
 
+    let query_resp: QueryResponse = resp.json().await.context("parsing coordinator response")?;
     let mut batches = Vec::new();
-    for manifest in &manifests {
-        batches.extend(
-            atlas_format::read_atlas_file(Path::new(&manifest.file_path), None)
-                .with_context(|| format!("reading manifest file {}", manifest.file_path))?,
-        );
+    for encoded in &query_resp.arrow_ipc_batches {
+        let bytes = BASE64
+            .decode(encoded)
+            .context("decoding arrow_ipc_batches base64")?;
+        batches.extend(decode_arrow_ipc(&bytes)?);
     }
 
-    let stmt = atlas_query::parse_sql(sql)?;
-    let plan = atlas_query::build_logical_plan(&stmt, &schema)?;
-    let result = atlas_exec::execute(&plan, batches)?;
-
-    arrow::util::pretty::print_batches(&result)?;
+    arrow::util::pretty::print_batches(&batches)?;
     Ok(())
+}
+
+/// Decode one self-contained Arrow IPC stream, as produced by
+/// `atlas-worker`'s `ResultBatch.arrow_ipc` (see `proto/worker.proto`).
+fn decode_arrow_ipc(bytes: &[u8]) -> Result<Vec<arrow::record_batch::RecordBatch>> {
+    if bytes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let reader = arrow::ipc::reader::StreamReader::try_new(std::io::Cursor::new(bytes), None)
+        .context("opening Arrow IPC stream from coordinator response")?;
+    reader
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .context("reading Arrow IPC batches from coordinator response")
 }
 
 async fn run_ingest(file: &Path, dataset: &str, data_dir: &Path, catalog_addr: &str) -> Result<()> {

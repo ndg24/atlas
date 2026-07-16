@@ -1,0 +1,76 @@
+syntax = "proto3";
+package atlas.worker;
+
+option go_package = "atlas/coordinator/internal/workerpb;workerpb";
+
+// Distributed execution (docs/atlas-implementation-spec.md Phase 3). The
+// coordinator (Go) never parses SQL or inspects plan structure itself — it
+// calls Compile once per query on any live worker to get back the plan
+// already split into the two halves scheduling needs:
+//
+//   partial_plan_json:  run once per manifest/file, on that partition's rows.
+//   combine_plan_json:  run once, over the union of every partial result —
+//                        the two-phase aggregate re-combine (COUNT/SUM/MIN/MAX
+//                        re-aggregated, AVG reconstructed from partial
+//                        sum+count) and/or the final ORDER BY + LIMIT.
+//
+// Both are JSON-serialized atlas_query::LogicalPlan values (serde, not this
+// proto file) — the coordinator threads them through unopened. needs_combine
+// is false for a plain scan+filter+project query, in which case the
+// coordinator just concatenates worker outputs directly with no extra RPC.
+//
+// TaskRequest.source picks where ExecuteTask's plan runs: FileSource reads a
+// `.atlas` partition off disk (the per-manifest scan), InlineSource runs the
+// plan directly over already-computed Arrow IPC batches (the combine step,
+// executed by handing one worker the concatenated partial results). Either
+// way the worker just calls atlas_exec::execute(plan, batches) — a task is
+// "run this plan against these rows," never anything more specific.
+
+service WorkerService {
+  rpc Compile(CompileRequest) returns (CompileResponse);
+  rpc ExecuteTask(TaskRequest) returns (stream ResultBatch);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+}
+
+message CompileRequest {
+  string sql = 1;
+  string schema_json = 2;
+}
+
+message CompileResponse {
+  string partial_plan_json = 1;
+  string combine_plan_json = 2; // empty if !needs_combine
+  bool needs_combine = 3;
+  string error = 4; // set (with the fields above empty) if SQL failed to compile
+}
+
+message TaskRequest {
+  string task_id = 1;
+  string plan_json = 2;
+  oneof source {
+    FileSource file = 3;
+    InlineSource inline = 4;
+  }
+}
+
+message FileSource {
+  string file_path = 1;
+  repeated string columns = 2; // empty = all columns
+}
+
+message InlineSource {
+  // Each entry is one self-contained Arrow IPC stream (as produced by
+  // ResultBatch.arrow_ipc), typically one per upstream partial task.
+  repeated bytes arrow_ipc_batches = 1;
+}
+
+message ResultBatch {
+  bytes arrow_ipc = 1;
+}
+
+message HeartbeatRequest {}
+
+message HeartbeatResponse {
+  bool alive = 1;
+  int32 in_flight_tasks = 2;
+}
