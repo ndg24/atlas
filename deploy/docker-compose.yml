@@ -32,6 +32,16 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   catalog:
     build:
       context: ..
@@ -96,6 +106,7 @@ services:
       CATALOG_ADDR: "catalog:9091"
       COORDINATOR_ADDR: ":8080"
       WORKER_ADDRS: "worker-1:9100,worker-2:9100,worker-3:9100"
+      REDIS_URL: "redis://redis:6379"
     ports:
       - "8080:8080"
     depends_on:
@@ -103,6 +114,7 @@ services:
       - worker-1
       - worker-2
       - worker-3
+      - redis
 
 volumes:
   postgres-data:

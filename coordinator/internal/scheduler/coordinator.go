@@ -6,6 +6,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"atlas/coordinator/internal/planjson"
 	pb "atlas/coordinator/internal/workerpb"
 )
 
@@ -75,6 +76,15 @@ func (c *Coordinator) RunCompiled(ctx context.Context, compiled *pb.CompileRespo
 		return &QueryResult{}, nil
 	}
 
+	// Phase 4 column pruning: the plan's Scan node already carries the
+	// pruned column list (atlas-optimizer's ColumnPruningRule, applied on
+	// the worker during Compile) — thread it into each FileSource so
+	// atlas_format::read_atlas_file actually skips unrequested columns'
+	// byte ranges instead of reading everything. Best-effort: a plan we
+	// can't parse just falls back to reading every column, never fails the
+	// query outright over an optimization detail.
+	columns, _ := planjson.ExtractScanColumns(compiled.GetPartialPlanJson())
+
 	partials := make([][]byte, len(manifests))
 	g, gctx := errgroup.WithContext(ctx)
 	for i, m := range manifests {
@@ -82,7 +92,7 @@ func (c *Coordinator) RunCompiled(ctx context.Context, compiled *pb.CompileRespo
 			req := &pb.TaskRequest{
 				TaskId:   fmt.Sprintf("partial-%d", i),
 				PlanJson: compiled.GetPartialPlanJson(),
-				Source:   &pb.TaskRequest_File{File: &pb.FileSource{FilePath: m.FilePath}},
+				Source:   &pb.TaskRequest_File{File: &pb.FileSource{FilePath: m.FilePath, Columns: columns}},
 			}
 			result, err := c.runTaskWithRetry(gctx, req.GetTaskId(), req)
 			if err != nil {

@@ -37,10 +37,14 @@ func (s *Store) Start(ctx context.Context, source, rawInput, logicalPlanJSON str
 	return id, nil
 }
 
-// SetPlan records the actual compiled plan against an already-started row.
-func (s *Store) SetPlan(ctx context.Context, id, logicalPlanJSON string) error {
+// SetPlan records the actual compiled plan against an already-started row:
+// logicalPlanJSON is the plan before any Phase 4 rule rewrites,
+// physicalPlanJSON is `{"partial": ..., "combine": ...}` — the rewritten,
+// partial/combine-split plan actually dispatched to workers.
+func (s *Store) SetPlan(ctx context.Context, id, logicalPlanJSON, physicalPlanJSON string) error {
 	_, err := s.pool.Exec(ctx,
-		`UPDATE query_history SET logical_plan_json = $1 WHERE id = $2`, logicalPlanJSON, id,
+		`UPDATE query_history SET logical_plan_json = $1, physical_plan_json = $2 WHERE id = $3`,
+		logicalPlanJSON, physicalPlanJSON, id,
 	)
 	if err != nil {
 		return fmt.Errorf("updating query_history plan for %s: %w", id, err)

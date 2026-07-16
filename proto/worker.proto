@@ -42,6 +42,12 @@ message CompileResponse {
   string combine_plan_json = 2; // empty if !needs_combine
   bool needs_combine = 3;
   string error = 4; // set (with the fields above empty) if SQL failed to compile
+  // Phase 4 (docs/atlas-implementation-spec.md): the plan before any rule
+  // rewrites, and after rule rewrites but before the partial/combine split.
+  // `POST /explain` returns both; the coordinator threads them through
+  // unopened same as the other plan fields.
+  string logical_plan_json = 5;
+  string optimized_plan_json = 6;
 }
 
 message TaskRequest {

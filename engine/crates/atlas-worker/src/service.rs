@@ -28,21 +28,39 @@ pub struct WorkerServiceImpl {
     in_flight: AtomicI32,
 }
 
-fn compile_query(sql: &str, schema_json: &str) -> Result<(String, Option<String>)> {
+struct CompiledQuery {
+    logical_plan_json: String,
+    optimized_plan_json: String,
+    partial_plan_json: String,
+    combine_plan_json: Option<String>,
+}
+
+fn compile_query(sql: &str, schema_json: &str) -> Result<CompiledQuery> {
     let schema: atlas_format::Schema =
         serde_json::from_str(schema_json).context("parsing dataset schema_json")?;
     let stmt = atlas_query::parse_sql(sql)?;
-    let plan = atlas_query::build_logical_plan(&stmt, &schema)?;
-    let split = split_for_distribution(plan);
+    let raw_plan = atlas_query::build_logical_plan(&stmt, &schema)?;
+    let optimized_plan = atlas_optimizer::optimize(raw_plan.clone());
+    let split = split_for_distribution(optimized_plan.clone());
 
-    let partial_json = serde_json::to_string(&split.partial).context("serializing partial plan")?;
-    let combine_json = split
+    let logical_plan_json =
+        serde_json::to_string(&raw_plan).context("serializing raw logical plan")?;
+    let optimized_plan_json =
+        serde_json::to_string(&optimized_plan).context("serializing optimized plan")?;
+    let partial_plan_json =
+        serde_json::to_string(&split.partial).context("serializing partial plan")?;
+    let combine_plan_json = split
         .combine
         .as_ref()
         .map(serde_json::to_string)
         .transpose()
         .context("serializing combine plan")?;
-    Ok((partial_json, combine_json))
+    Ok(CompiledQuery {
+        logical_plan_json,
+        optimized_plan_json,
+        partial_plan_json,
+        combine_plan_json,
+    })
 }
 
 fn run_task(req: TaskRequest) -> Result<Vec<RecordBatch>> {
@@ -82,15 +100,19 @@ impl WorkerService for WorkerServiceImpl {
     ) -> Result<Response<CompileResponse>, Status> {
         let req = request.into_inner();
         let response = match compile_query(&req.sql, &req.schema_json) {
-            Ok((partial_plan_json, combine_plan_json)) => CompileResponse {
-                needs_combine: combine_plan_json.is_some(),
-                partial_plan_json,
-                combine_plan_json: combine_plan_json.unwrap_or_default(),
+            Ok(compiled) => CompileResponse {
+                needs_combine: compiled.combine_plan_json.is_some(),
+                partial_plan_json: compiled.partial_plan_json,
+                combine_plan_json: compiled.combine_plan_json.unwrap_or_default(),
+                logical_plan_json: compiled.logical_plan_json,
+                optimized_plan_json: compiled.optimized_plan_json,
                 error: String::new(),
             },
             Err(err) => CompileResponse {
                 partial_plan_json: String::new(),
                 combine_plan_json: String::new(),
+                logical_plan_json: String::new(),
+                optimized_plan_json: String::new(),
                 needs_combine: false,
                 error: format!("{err:#}"),
             },
@@ -126,5 +148,51 @@ impl WorkerService for WorkerServiceImpl {
             alive: true,
             in_flight_tasks: self.in_flight.load(Ordering::SeqCst),
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use atlas_format::{DataType, Field, Schema};
+
+    fn schema_json() -> String {
+        let schema = Schema::new(vec![
+            Field::new("diagnosis", DataType::Utf8, false),
+            Field::new("age", DataType::Int64, false),
+            Field::new("cost", DataType::Float64, false),
+            Field::new("hospital", DataType::Utf8, false),
+        ]);
+        serde_json::to_string(&schema).unwrap()
+    }
+
+    /// Proves column pruning has a real physical effect end to end: the
+    /// worker-compiled partial plan's `Scan.columns` is exactly the columns
+    /// this query touches, not all 4 schema columns. Composes with Phase 2's
+    /// `read_atlas_file` column-skipping test (which proves a restricted
+    /// `columns` list physically skips bytes) to establish the full claim
+    /// without re-implementing that byte-counting harness here.
+    #[test]
+    fn compile_prunes_partial_plan_scan_columns() {
+        let compiled =
+            compile_query("SELECT diagnosis FROM t WHERE age > 50", &schema_json()).unwrap();
+
+        let partial: atlas_query::LogicalPlan =
+            serde_json::from_str(&compiled.partial_plan_json).unwrap();
+        let atlas_query::LogicalPlan::Project(project) = &partial else {
+            panic!("expected Project at partial plan root, got {partial:?}");
+        };
+        let atlas_query::LogicalPlan::Filter(filter) = project.input.as_ref() else {
+            panic!("expected Filter under Project, got {:?}", project.input);
+        };
+        let atlas_query::LogicalPlan::Scan(scan) = filter.input.as_ref() else {
+            panic!("expected Scan under Filter, got {:?}", filter.input);
+        };
+        assert_eq!(
+            scan.columns,
+            vec!["age".to_string(), "diagnosis".to_string()]
+        );
+        assert!(!scan.columns.contains(&"cost".to_string()));
+        assert!(!scan.columns.contains(&"hospital".to_string()));
     }
 }

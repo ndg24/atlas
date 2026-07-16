@@ -4,6 +4,7 @@ members = [
     "crates/atlas-format",
     "crates/atlas-storage",
     "crates/atlas-query",
+    "crates/atlas-optimizer",
     "crates/atlas-exec",
     "crates/atlas-cli",
     "crates/atlas-worker",

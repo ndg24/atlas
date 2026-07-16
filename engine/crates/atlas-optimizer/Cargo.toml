@@ -1,0 +1,11 @@
+[package]
+name = "atlas-optimizer"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+atlas-query = { path = "../atlas-query" }
+
+[dev-dependencies]
+atlas-format = { path = "../atlas-format" }

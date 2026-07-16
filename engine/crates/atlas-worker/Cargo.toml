@@ -16,6 +16,7 @@ prost = { workspace = true }
 serde_json = { workspace = true }
 atlas-format = { path = "../atlas-format" }
 atlas-query = { path = "../atlas-query" }
+atlas-optimizer = { path = "../atlas-optimizer" }
 atlas-exec = { path = "../atlas-exec" }
 
 [build-dependencies]

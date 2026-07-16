@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"atlas/coordinator/internal/api"
+	"atlas/coordinator/internal/cache"
 	catalogpb "atlas/coordinator/internal/catalogpb"
 	"atlas/coordinator/internal/history"
 	"atlas/coordinator/internal/scheduler"
@@ -36,6 +37,7 @@ func run() error {
 	catalogAddr := envOr("CATALOG_ADDR", "127.0.0.1:9091")
 	listenAddr := envOr("COORDINATOR_ADDR", ":8080")
 	workerAddrs := strings.Split(envOr("WORKER_ADDRS", "127.0.0.1:9100"), ",")
+	redisURL := envOr("REDIS_URL", "redis://127.0.0.1:6379")
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -62,7 +64,18 @@ func run() error {
 
 	coordinator := &scheduler.Coordinator{Registry: registry}
 	historyStore := history.NewStore(pool)
-	server := api.NewServer(catalogClient, coordinator, historyStore)
+
+	// A Redis connectivity problem should never take the coordinator down —
+	// cache.Get/Set failures are swallowed by the API layer and treated as
+	// misses, so it's safe to always construct the client here even if
+	// Redis isn't reachable yet.
+	resultCache, err := cache.New(redisURL, 5*time.Minute)
+	if err != nil {
+		return err
+	}
+	defer resultCache.Close()
+
+	server := api.NewServer(catalogClient, coordinator, historyStore, resultCache)
 
 	httpServer := &http.Server{Addr: listenAddr, Handler: server.Routes()}
 	go func() {
