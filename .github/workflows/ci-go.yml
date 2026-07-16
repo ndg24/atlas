@@ -1,0 +1,30 @@
+name: ci-go
+
+on:
+  pull_request:
+    paths:
+      - "coordinator/**"
+      - ".github/workflows/ci-go.yml"
+  push:
+    branches: [main]
+    paths:
+      - "coordinator/**"
+      - ".github/workflows/ci-go.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: coordinator
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: coordinator/go.sum
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: coordinator
+      - name: test
+        run: go test ./...

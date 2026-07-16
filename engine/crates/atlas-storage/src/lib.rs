@@ -1,6 +1,8 @@
 //! CSV reading for Atlas: sampling (for schema inference) and full,
 //! schema-driven reads into Arrow `RecordBatch`es.
 
+mod store;
+
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
@@ -10,6 +12,8 @@ use arrow::array::RecordBatch;
 use arrow::datatypes::Schema;
 use arrow_csv::ReaderBuilder;
 use regex::Regex;
+
+pub use store::{get_bytes, get_range, local_store, put_file};
 
 const BATCH_SIZE: usize = 8192;
 

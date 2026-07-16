@@ -1,0 +1,48 @@
+syntax = "proto3";
+package atlas.format;
+
+option go_package = "atlas/coordinator/internal/catalogpb;catalogpb";
+
+// The `.atlas` columnar file footer. See docs/atlas-implementation-spec.md
+// §1.2 for the full byte layout:
+//
+//   [Page 0][Page 1]...[Page N]
+//   [Footer]
+//   [Footer length: 4 bytes LE][Magic: "ATL1" 4 bytes]
+//
+// Written and read by engine/crates/atlas-format via prost codegen (build.rs).
+// column_stats on a Manifest row in the catalog (proto/catalog.proto) is the
+// same Statistics shape, JSON-serialized, so the two stay consistent by
+// construction rather than by convention.
+
+message FileFooter {
+  repeated ColumnChunk columns = 1;
+  uint64 row_count = 2;
+  string schema_json = 3; // Arrow schema, JSON-serialized
+}
+
+message ColumnChunk {
+  string name = 1;
+  repeated PageMeta pages = 2;
+  Statistics stats = 3; // file-level stats for this column
+}
+
+message PageMeta {
+  uint64 offset = 1;
+  uint64 compressed_length = 2;
+  uint64 uncompressed_length = 3;
+  uint32 row_count = 4;
+  enum Compression {
+    NONE = 0;
+    LZ4 = 1;
+    ZSTD = 2;
+  }
+  Compression compression = 5;
+}
+
+message Statistics {
+  bytes min = 1;
+  bytes max = 2;
+  uint64 null_count = 3;
+  uint64 distinct_count_estimate = 4; // HyperLogLog-derived, optional until Phase 4
+}

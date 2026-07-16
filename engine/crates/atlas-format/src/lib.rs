@@ -1,7 +1,22 @@
 //! Shared schema types for Atlas. Re-exports `arrow::datatypes` directly —
 //! there is no value in a parallel type system that just wraps Arrow's.
 
+pub mod footer;
+#[cfg(test)]
+mod format_tests;
+mod page;
+pub mod partition;
+mod reader;
+mod stats;
+mod writer;
+
 pub use arrow::datatypes::{DataType, Field, Schema};
+pub use footer::page_meta::Compression;
+pub use footer::{ColumnChunk, FileFooter, PageMeta, Statistics};
+pub use partition::{write_partitioned, PartitionValues};
+pub use reader::{read_atlas_file, read_footer};
+pub use stats::compute_statistics;
+pub use writer::write_atlas_file;
 
 const SAMPLE_ROWS: usize = 1000;
 const NULL_TOKENS: &[&str] = &["", "n/a", "na", "null", "nan"];
