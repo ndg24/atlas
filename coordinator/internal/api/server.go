@@ -122,7 +122,7 @@ func manifestFilePaths(manifests []*catalogpb.Manifest) []string {
 func toSchedulerManifests(manifests []*catalogpb.Manifest) []scheduler.Manifest {
 	out := make([]scheduler.Manifest, len(manifests))
 	for i, m := range manifests {
-		out[i] = scheduler.Manifest{FilePath: m.GetFilePath()}
+		out[i] = scheduler.Manifest{FilePath: m.GetFilePath(), Format: m.GetFormat()}
 	}
 	return out
 }

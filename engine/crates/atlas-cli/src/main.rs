@@ -39,19 +39,22 @@ enum Command {
         #[arg(long, default_value = DEFAULT_COORDINATOR_ADDR)]
         coordinator_addr: String,
     },
-    /// Ingest a CSV file into a dataset: write `.atlas` file(s) and commit a
-    /// new snapshot to the catalog.
+    /// Ingest a CSV file into a dataset: write `.atlas` (or Parquet) file(s)
+    /// and commit a new snapshot to the catalog.
     Ingest {
         #[arg(long)]
         file: PathBuf,
         #[arg(long)]
         dataset: String,
-        /// Root directory `.atlas` files are written under (one subdirectory
-        /// per dataset).
+        /// Root directory partition files are written under (one
+        /// subdirectory per dataset).
         #[arg(long, default_value = "data")]
         data_dir: PathBuf,
         #[arg(long, default_value = DEFAULT_CATALOG_ADDR)]
         catalog_addr: String,
+        /// File format to write: "atlas" (default) or "parquet".
+        #[arg(long, default_value = "atlas")]
+        format: String,
     },
 }
 
@@ -76,7 +79,8 @@ async fn main() -> Result<()> {
             dataset,
             data_dir,
             catalog_addr,
-        } => run_ingest(&file, &dataset, &data_dir, &catalog_addr).await,
+            format,
+        } => run_ingest(&file, &dataset, &data_dir, &catalog_addr, &format).await,
     }
 }
 
@@ -154,7 +158,17 @@ fn decode_arrow_ipc(bytes: &[u8]) -> Result<Vec<arrow::record_batch::RecordBatch
         .context("reading Arrow IPC batches from coordinator response")
 }
 
-async fn run_ingest(file: &Path, dataset: &str, data_dir: &Path, catalog_addr: &str) -> Result<()> {
+async fn run_ingest(
+    file: &Path,
+    dataset: &str,
+    data_dir: &Path,
+    catalog_addr: &str,
+    format: &str,
+) -> Result<()> {
+    if format != "atlas" && format != "parquet" {
+        bail!("unsupported format {format:?}, expected \"atlas\" or \"parquet\"");
+    }
+
     let (headers, sample) = atlas_storage::sample_headers_and_records(file, 1000)?;
     let schema = atlas_format::infer_schema(&sample, &headers);
     let batches = atlas_storage::read_csv(file, &schema)?;
@@ -163,20 +177,29 @@ async fn run_ingest(file: &Path, dataset: &str, data_dir: &Path, catalog_addr: &
     let dataset_dir = data_dir.join(dataset);
     std::fs::create_dir_all(&dataset_dir)
         .with_context(|| format!("creating dataset directory {}", dataset_dir.display()))?;
-    let atlas_path = dataset_dir.join(format!("part-{}.atlas", uuid::Uuid::new_v4()));
-    let footer = atlas_format::write_atlas_file(&atlas_path, &batches)?;
-    let file_size_bytes = std::fs::metadata(&atlas_path)
-        .with_context(|| format!("statting {}", atlas_path.display()))?
+    let ext = if format == "parquet" {
+        "parquet"
+    } else {
+        "atlas"
+    };
+    let out_path = dataset_dir.join(format!("part-{}.{ext}", uuid::Uuid::new_v4()));
+    if format == "parquet" {
+        atlas_format::write_parquet(&out_path, &batches)?;
+    } else {
+        atlas_format::write_atlas_file(&out_path, &batches)?;
+    }
+    let file_size_bytes = std::fs::metadata(&out_path)
+        .with_context(|| format!("statting {}", out_path.display()))?
         .len() as i64;
-    let absolute_path = atlas_path
+    let absolute_path = out_path
         .canonicalize()
-        .with_context(|| format!("resolving absolute path for {}", atlas_path.display()))?;
+        .with_context(|| format!("resolving absolute path for {}", out_path.display()))?;
 
     let mut client = connect(catalog_addr).await?;
     let schema_json = serde_json::to_string(&schema).context("serializing dataset schema")?;
     let dataset_id = ensure_dataset(&mut client, dataset, &schema_json).await?;
 
-    let column_stats_json = serde_json::to_string(&column_stats_by_name(&footer))
+    let column_stats_json = serde_json::to_string(&column_stats_by_name(&batches)?)
         .context("serializing column stats")?;
     let manifest = ManifestInput {
         file_path: absolute_path.to_string_lossy().into_owned(),
@@ -184,6 +207,7 @@ async fn run_ingest(file: &Path, dataset: &str, data_dir: &Path, catalog_addr: &
         row_count,
         file_size_bytes,
         column_stats_json,
+        format: format.to_string(),
     };
     let summary_json = serde_json::json!({ "row_count": row_count, "file_count": 1 }).to_string();
 
@@ -242,18 +266,18 @@ async fn ensure_dataset(
     }
 }
 
-fn column_stats_by_name(footer: &atlas_format::FileFooter) -> HashMap<String, serde_json::Value> {
-    footer
-        .columns
-        .iter()
-        .map(|chunk| {
-            let stats = chunk.stats.clone().unwrap_or_default();
+fn column_stats_by_name(
+    batches: &[arrow::record_batch::RecordBatch],
+) -> Result<HashMap<String, serde_json::Value>> {
+    Ok(atlas_format::compute_batches_column_stats(batches)?
+        .into_iter()
+        .map(|(name, stats)| {
             let value = serde_json::json!({
                 "min": BASE64.encode(&stats.min),
                 "max": BASE64.encode(&stats.max),
                 "null_count": stats.null_count,
             });
-            (chunk.name.clone(), value)
+            (name, value)
         })
-        .collect()
+        .collect())
 }

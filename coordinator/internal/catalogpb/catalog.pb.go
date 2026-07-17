@@ -198,6 +198,7 @@ type Manifest struct {
 	RowCount            int64                  `protobuf:"varint,5,opt,name=row_count,json=rowCount,proto3" json:"row_count,omitempty"`
 	FileSizeBytes       int64                  `protobuf:"varint,6,opt,name=file_size_bytes,json=fileSizeBytes,proto3" json:"file_size_bytes,omitempty"`
 	ColumnStatsJson     string                 `protobuf:"bytes,7,opt,name=column_stats_json,json=columnStatsJson,proto3" json:"column_stats_json,omitempty"` // {column: {min, max, null_count}}
+	Format              string                 `protobuf:"bytes,8,opt,name=format,proto3" json:"format,omitempty"`                                            // "atlas" | "parquet" (future: "iceberg")
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -277,6 +278,13 @@ func (x *Manifest) GetFileSizeBytes() int64 {
 func (x *Manifest) GetColumnStatsJson() string {
 	if x != nil {
 		return x.ColumnStatsJson
+	}
+	return ""
+}
+
+func (x *Manifest) GetFormat() string {
+	if x != nil {
+		return x.Format
 	}
 	return ""
 }
@@ -540,6 +548,7 @@ type ManifestInput struct {
 	RowCount            int64                  `protobuf:"varint,3,opt,name=row_count,json=rowCount,proto3" json:"row_count,omitempty"`
 	FileSizeBytes       int64                  `protobuf:"varint,4,opt,name=file_size_bytes,json=fileSizeBytes,proto3" json:"file_size_bytes,omitempty"`
 	ColumnStatsJson     string                 `protobuf:"bytes,5,opt,name=column_stats_json,json=columnStatsJson,proto3" json:"column_stats_json,omitempty"`
+	Format              string                 `protobuf:"bytes,6,opt,name=format,proto3" json:"format,omitempty"` // "atlas" | "parquet" (future: "iceberg")
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -605,6 +614,13 @@ func (x *ManifestInput) GetFileSizeBytes() int64 {
 func (x *ManifestInput) GetColumnStatsJson() string {
 	if x != nil {
 		return x.ColumnStatsJson
+	}
+	return ""
+}
+
+func (x *ManifestInput) GetFormat() string {
+	if x != nil {
+		return x.Format
 	}
 	return ""
 }
@@ -763,7 +779,7 @@ const file_catalog_proto_rawDesc = "" +
 	"\toperation\x18\x05 \x01(\tR\toperation\x12!\n" +
 	"\fsummary_json\x18\x06 \x01(\tR\vsummaryJson\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\a \x01(\tR\tcreatedAt\"\xfd\x01\n" +
+	"created_at\x18\a \x01(\tR\tcreatedAt\"\x95\x02\n" +
 	"\bManifest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1f\n" +
 	"\vsnapshot_id\x18\x02 \x01(\tR\n" +
@@ -772,7 +788,8 @@ const file_catalog_proto_rawDesc = "" +
 	"\x15partition_values_json\x18\x04 \x01(\tR\x13partitionValuesJson\x12\x1b\n" +
 	"\trow_count\x18\x05 \x01(\x03R\browCount\x12&\n" +
 	"\x0ffile_size_bytes\x18\x06 \x01(\x03R\rfileSizeBytes\x12*\n" +
-	"\x11column_stats_json\x18\a \x01(\tR\x0fcolumnStatsJson\"K\n" +
+	"\x11column_stats_json\x18\a \x01(\tR\x0fcolumnStatsJson\x12\x16\n" +
+	"\x06format\x18\b \x01(\tR\x06format\"K\n" +
 	"\x14CreateDatasetRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1f\n" +
 	"\vschema_json\x18\x02 \x01(\tR\n" +
@@ -788,13 +805,14 @@ const file_catalog_proto_rawDesc = "" +
 	"\x12manifest_list_path\x18\x02 \x01(\tR\x10manifestListPath\x12\x1c\n" +
 	"\toperation\x18\x03 \x01(\tR\toperation\x12!\n" +
 	"\fsummary_json\x18\x04 \x01(\tR\vsummaryJson\x12:\n" +
-	"\tmanifests\x18\x05 \x03(\v2\x1c.atlas.catalog.ManifestInputR\tmanifests\"\xd1\x01\n" +
+	"\tmanifests\x18\x05 \x03(\v2\x1c.atlas.catalog.ManifestInputR\tmanifests\"\xe9\x01\n" +
 	"\rManifestInput\x12\x1b\n" +
 	"\tfile_path\x18\x01 \x01(\tR\bfilePath\x122\n" +
 	"\x15partition_values_json\x18\x02 \x01(\tR\x13partitionValuesJson\x12\x1b\n" +
 	"\trow_count\x18\x03 \x01(\x03R\browCount\x12&\n" +
 	"\x0ffile_size_bytes\x18\x04 \x01(\x03R\rfileSizeBytes\x12*\n" +
-	"\x11column_stats_json\x18\x05 \x01(\tR\x0fcolumnStatsJson\"7\n" +
+	"\x11column_stats_json\x18\x05 \x01(\tR\x0fcolumnStatsJson\x12\x16\n" +
+	"\x06format\x18\x06 \x01(\tR\x06format\"7\n" +
 	"\x12GetSnapshotRequest\x12!\n" +
 	"\fdataset_name\x18\x01 \x01(\tR\vdatasetName\"7\n" +
 	"\x14ListManifestsRequest\x12\x1f\n" +

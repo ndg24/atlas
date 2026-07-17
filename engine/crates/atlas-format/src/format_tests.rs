@@ -9,7 +9,7 @@ use arrow::array::{
 };
 use arrow::datatypes::{DataType, Field, Schema};
 
-use crate::{read_atlas_file, write_atlas_file, write_partitioned};
+use crate::{read_atlas_file, read_parquet, write_atlas_file, write_parquet, write_partitioned};
 
 fn batch_with_all_types() -> RecordBatch {
     let schema = Arc::new(Schema::new(vec![
@@ -45,6 +45,32 @@ fn round_trips_every_supported_type_including_nulls() {
     let read_back = read_atlas_file(&path, None).unwrap();
     assert_eq!(read_back.len(), 1);
     assert_eq!(read_back[0], original);
+}
+
+#[test]
+fn parquet_round_trips_every_supported_type_including_nulls() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("all_types.parquet");
+    let original = batch_with_all_types();
+
+    write_parquet(&path, &[original.clone()]).unwrap();
+
+    let read_back = read_parquet(&path, None).unwrap();
+    assert_eq!(read_back.len(), 1);
+    assert_eq!(read_back[0], original);
+}
+
+#[test]
+fn parquet_reading_subset_of_columns_returns_only_those_columns() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("subset.parquet");
+    write_parquet(&path, &[batch_with_all_types()]).unwrap();
+
+    let names = vec!["s".to_string(), "b".to_string()];
+    let batches = read_parquet(&path, Some(&names)).unwrap();
+    assert_eq!(batches[0].schema().fields().len(), 2);
+    assert_eq!(batches[0].schema().field(0).name(), "s");
+    assert_eq!(batches[0].schema().field(1).name(), "b");
 }
 
 #[test]

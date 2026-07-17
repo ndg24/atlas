@@ -223,30 +223,32 @@ func writeCSV(t *testing.T, path string, rows [][]string) {
 	}
 }
 
-// ingestPartition runs `atlas-cli ingest` against a throwaway dataset name so
-// the real Rust ingestion path produces a `.atlas` file, then returns that
-// file's path discovered on disk (not parsed from stdout).
-func ingestPartition(t *testing.T, cliBin, catalogAddr, csvPath, dataDir, dataset string) string {
+// ingestPartition runs `atlas-cli ingest --format <format>` against a
+// throwaway dataset name so the real Rust ingestion path produces a
+// `.<format>` file, then returns that file's path discovered on disk (not
+// parsed from stdout).
+func ingestPartition(t *testing.T, cliBin, catalogAddr, csvPath, dataDir, dataset, format string) string {
 	t.Helper()
 	cmd := exec.Command(cliBin, "ingest",
 		"--file", csvPath,
 		"--dataset", dataset,
 		"--data-dir", dataDir,
 		"--catalog-addr", "http://"+catalogAddr,
+		"--format", format,
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("ingesting %s: %v\n%s", csvPath, err, out)
 	}
 
-	matches, err := filepath.Glob(filepath.Join(dataDir, dataset, "*.atlas"))
+	matches, err := filepath.Glob(filepath.Join(dataDir, dataset, "*."+format))
 	if err != nil || len(matches) != 1 {
-		t.Fatalf("expected exactly one .atlas file for dataset %s, got %v (err=%v)", dataset, matches, err)
+		t.Fatalf("expected exactly one .%s file for dataset %s, got %v (err=%v)", format, dataset, matches, err)
 	}
 	return matches[0]
 }
 
-func setupFixture(t *testing.T) *fixture {
+func setupFixture(t *testing.T, format string) *fixture {
 	t.Helper()
 	workerBin, cliBin := ensureBinaries(t)
 	catalogAddr, stopCatalog := startCatalog(t)
@@ -261,8 +263,8 @@ func setupFixture(t *testing.T) *fixture {
 	for i, rows := range partitions {
 		csvPath := filepath.Join(tmpDir, fmt.Sprintf("part%d.csv", i))
 		writeCSV(t, csvPath, rows)
-		filePath := ingestPartition(t, cliBin, catalogAddr, csvPath, tmpDir, fmt.Sprintf("part%d", i))
-		manifests = append(manifests, scheduler.Manifest{FilePath: filePath})
+		filePath := ingestPartition(t, cliBin, catalogAddr, csvPath, tmpDir, fmt.Sprintf("part%d", i), format)
+		manifests = append(manifests, scheduler.Manifest{FilePath: filePath, Format: format})
 	}
 
 	catalogConn, err := grpc.NewClient(catalogAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -298,6 +300,7 @@ func setupFixture(t *testing.T) *fixture {
 			RowCount:            int64(len(partitions[i]) - 1), // minus the header row
 			FileSizeBytes:       1,
 			ColumnStatsJson:     "{}",
+			Format:              format,
 		}
 	}
 	if _, err := catalogClient.CommitSnapshot(ctx, &catalogpb.CommitSnapshotRequest{
@@ -394,32 +397,36 @@ func TestDistributedGroupBy_MatchesSingleNodeBaseline(t *testing.T) {
 	if testing.Short() {
 		t.Skip("spawns real worker processes and a Postgres container")
 	}
-	f := setupFixture(t)
-	defer f.cleanup()
+	for _, format := range []string{"atlas", "parquet"} {
+		t.Run(format, func(t *testing.T) {
+			f := setupFixture(t, format)
+			defer f.cleanup()
 
-	registry, err := scheduler.NewRegistry(f.workerAddrs())
-	if err != nil {
-		t.Fatalf("creating registry: %v", err)
+			registry, err := scheduler.NewRegistry(f.workerAddrs())
+			if err != nil {
+				t.Fatalf("creating registry: %v", err)
+			}
+			defer registry.Close()
+			hbCtx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			registry.StartHeartbeats(hbCtx, 2*time.Second)
+			coordinator := &scheduler.Coordinator{Registry: registry}
+
+			result, err := coordinator.RunQuery(context.Background(), distributedGroupBySQL, f.schemaJSON, f.manifests)
+			if err != nil {
+				t.Fatalf("RunQuery: %v", err)
+			}
+
+			assertRowsEqual(t, wantRows, decodeRows(t, result.ArrowIPCBatches))
+		})
 	}
-	defer registry.Close()
-	hbCtx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	registry.StartHeartbeats(hbCtx, 2*time.Second)
-	coordinator := &scheduler.Coordinator{Registry: registry}
-
-	result, err := coordinator.RunQuery(context.Background(), distributedGroupBySQL, f.schemaJSON, f.manifests)
-	if err != nil {
-		t.Fatalf("RunQuery: %v", err)
-	}
-
-	assertRowsEqual(t, wantRows, decodeRows(t, result.ArrowIPCBatches))
 }
 
 func TestDistributedGroupBy_SurvivesAWorkerDying(t *testing.T) {
 	if testing.Short() {
 		t.Skip("spawns real worker processes and a Postgres container")
 	}
-	f := setupFixture(t)
+	f := setupFixture(t, "atlas")
 	defer f.cleanup()
 
 	registry, err := scheduler.NewRegistry(f.workerAddrs())

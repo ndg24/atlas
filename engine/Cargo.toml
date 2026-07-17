@@ -17,6 +17,7 @@ publish = false
 [workspace.dependencies]
 arrow = "53"
 arrow-csv = "53"
+parquet = "53"
 csv = "1"
 sqlparser = "0.51"
 clap = { version = "4", features = ["derive"] }

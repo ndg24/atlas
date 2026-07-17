@@ -98,6 +98,7 @@ async fn distributed_group_by_with_avg_matches_hand_computed_baseline() {
                 source: Some(Source::File(FileSource {
                     file_path: path.to_string_lossy().into_owned(),
                     columns: vec![],
+                    format: String::new(),
                 })),
             })
             .await

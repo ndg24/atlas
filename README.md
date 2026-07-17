@@ -1,6 +1,6 @@
 # Atlas
 
-A distributed analytics engine that turns SQL, natural language, and open-ended research questions into query results — a Rust storage/query engine, a Go coordinator, a Python AI service, and a Next.js dashboard, all sharing one query IR and reading/writing an open columnar format alongside native Parquet and Iceberg interop.
+A distributed analytics engine that turns SQL, natural language, and open-ended research questions into query results — a Rust storage/query engine, a Go coordinator, a Python AI service, and a Next.js dashboard, all sharing one query IR and reading/writing an open columnar format alongside native Parquet read/write (Iceberg interop planned).
 
 ## Overview
 
@@ -8,7 +8,7 @@ Data gets ingested into Atlas's own `.atlas` columnar format (or Parquet), split
 
 ## Features
 
-- **Columnar storage with real column pruning** — the `.atlas` format (page-per-column, protobuf footer, min/max/null-count statistics per column) is read by seeking straight to the byte ranges of the requested columns, so scanning 2 of 20 columns only ever touches those 2 columns' pages. Parquet is a first-class alternative format on the same ingestion path, and Iceberg (and Delta) tables created by other engines can be queried directly as external tables — a dataset's manifests can mix `.atlas`, Parquet, and Iceberg files, dispatched per-file at read time.
+- **Columnar storage with real column pruning** — the `.atlas` format (page-per-column, protobuf footer, min/max/null-count statistics per column) is read by seeking straight to the byte ranges of the requested columns, so scanning 2 of 20 columns only ever touches those 2 columns' pages. Parquet is a first-class alternative format on the same ingestion path (`atlas-cli ingest --format parquet`) — a dataset's manifests carry a `format` field so a per-file worker dispatch can pick the right reader, and a single dataset's manifests can already mix `.atlas` and Parquet files. Iceberg (and Delta) tables created by other engines being queryable as external tables is planned, extending the same `format` field rather than requiring another migration.
 - **Immutable, snapshotted metadata catalog** — every ingest commits a new snapshot (Postgres-backed: `datasets` / `snapshots` / `manifests` / `query_history`) in a single transaction, so a crash mid-commit never leaves the catalog pointing at a half-written snapshot. Queries always resolve against `current_snapshot_id`, giving every query a consistent, point-in-time view of the data.
 - **Distributed, fault-tolerant execution** — the coordinator schedules one task per manifest/partition across registered workers (heartbeat-tracked, least-loaded assignment), streams partial results back over gRPC, and merges them per plan shape — a second aggregation pass for `GROUP BY`, a k-way merge for `ORDER BY` + `LIMIT`. A task whose worker misses its heartbeat or errors mid-stream is retried on a different live worker (up to 3 attempts) without failing the query.
 - **Rule-based query optimization** — column pruning and predicate pushdown rewrite the logical plan itself; partition pruning drops whole manifests using their partition values and column statistics before scheduling; a Redis-backed result cache is keyed on the hash of the *optimized* plan plus the dataset's snapshot id, so equivalent queries hit cache and a new ingest invalidates exactly the datasets it touched. `POST /explain` surfaces the plan before and after optimization, plus which manifests survived pruning and whether the result was served from cache.
@@ -38,7 +38,7 @@ Data gets ingested into Atlas's own `.atlas` columnar format (or Parquet), split
 
 | Layer | Tech |
 |---|---|
-| Engine (Rust) | `arrow` / `arrow-csv`, `sqlparser`, `parquet-rs`, `iceberg-rust` (+ `delta-rs`), `lz4_flex` / `zstd`, `object_store`, `tonic` (gRPC), `clap` |
+| Engine (Rust) | `arrow` / `arrow-csv`, `sqlparser`, `parquet-rs` (`iceberg-rust`/`delta-rs` planned), `lz4_flex` / `zstd`, `object_store`, `tonic` (gRPC), `clap` |
 | Coordinator (Go) | Go 1.22+, `pgx` (Postgres), `go-redis`, `golang-migrate`/`goose`, gRPC + REST handlers, `testcontainers-go` for integration tests |
 | AI service (Python) | Python 3.11+, `litellm` (Anthropic/OpenAI/Gemini/Ollama behind one adapter), `grpc.aio`, `pyarrow`, `pgvector`, Pydantic |
 | Metadata, cache & retrieval | Postgres (catalog: datasets/snapshots/manifests/query_history), Redis (result cache), `pgvector` (literature embeddings) |

@@ -125,3 +125,72 @@ func TestCommitSnapshot_ChainsParentAcrossTwoCommits(t *testing.T) {
 		t.Fatalf("unexpected manifests for second snapshot: %+v", manifests.GetManifests())
 	}
 }
+
+func TestCommitSnapshot_PreservesManifestFormat(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+
+	ds, err := svc.CreateDataset(ctx, &pb.CreateDatasetRequest{
+		Name:       "patients",
+		SchemaJson: `{"fields":[]}`,
+	})
+	if err != nil {
+		t.Fatalf("CreateDataset: %v", err)
+	}
+
+	snap, err := svc.CommitSnapshot(ctx, &pb.CommitSnapshotRequest{
+		DatasetId:        ds.GetId(),
+		ManifestListPath: "data/patients",
+		Operation:        "append",
+		SummaryJson:      `{"row_count":15}`,
+		Manifests: []*pb.ManifestInput{
+			{
+				FilePath:            "data/patients/part-0.atlas",
+				PartitionValuesJson: "{}",
+				RowCount:            10,
+				FileSizeBytes:       1024,
+				ColumnStatsJson:     "{}",
+				Format:              "atlas",
+			},
+			{
+				FilePath:            "data/patients/part-1.parquet",
+				PartitionValuesJson: "{}",
+				RowCount:            5,
+				FileSizeBytes:       512,
+				ColumnStatsJson:     "{}",
+				Format:              "parquet",
+			},
+			{
+				// Older/omitted-format callers should default to "atlas".
+				FilePath:            "data/patients/part-2.atlas",
+				PartitionValuesJson: "{}",
+				RowCount:            3,
+				FileSizeBytes:       256,
+				ColumnStatsJson:     "{}",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CommitSnapshot: %v", err)
+	}
+
+	manifests, err := svc.ListManifests(ctx, &pb.ListManifestsRequest{SnapshotId: snap.GetId()})
+	if err != nil {
+		t.Fatalf("ListManifests: %v", err)
+	}
+
+	formatByPath := map[string]string{}
+	for _, m := range manifests.GetManifests() {
+		formatByPath[m.GetFilePath()] = m.GetFormat()
+	}
+	want := map[string]string{
+		"data/patients/part-0.atlas":   "atlas",
+		"data/patients/part-1.parquet": "parquet",
+		"data/patients/part-2.atlas":   "atlas",
+	}
+	for path, wantFormat := range want {
+		if got := formatByPath[path]; got != wantFormat {
+			t.Fatalf("manifest %s format = %q, want %q", path, got, wantFormat)
+		}
+	}
+}

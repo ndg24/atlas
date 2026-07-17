@@ -5,6 +5,7 @@ pub mod footer;
 #[cfg(test)]
 mod format_tests;
 mod page;
+mod parquet;
 pub mod partition;
 mod reader;
 mod stats;
@@ -13,9 +14,10 @@ mod writer;
 pub use arrow::datatypes::{DataType, Field, Schema};
 pub use footer::page_meta::Compression;
 pub use footer::{ColumnChunk, FileFooter, PageMeta, Statistics};
+pub use parquet::{read_parquet, write_parquet};
 pub use partition::{write_partitioned, PartitionValues};
 pub use reader::{read_atlas_file, read_footer};
-pub use stats::compute_statistics;
+pub use stats::{compute_batches_column_stats, compute_statistics};
 pub use writer::write_atlas_file;
 
 const SAMPLE_ROWS: usize = 1000;

@@ -129,6 +129,33 @@ func TestPrunePartitions_AndCombination(t *testing.T) {
 	}
 }
 
+func TestPrunePartitions_FormatAgnostic(t *testing.T) {
+	// Same partition_values/column_stats, different `format` — pruning must
+	// reach the identical keep/prune decision regardless of file format,
+	// since PrunePartitions only ever reasons about partition_values/
+	// column_stats/file_path, never format.
+	atlasManifest := manifestWithPartition(t, "year=2024/part-0.atlas", map[string]any{"year": 2024})
+	atlasManifest.Format = "atlas"
+	parquetManifest := manifestWithPartition(t, "year=2024/part-0.parquet", map[string]any{"year": 2024})
+	parquetManifest.Format = "parquet"
+	prunedManifest := manifestWithPartition(t, "year=2020/part-0.parquet", map[string]any{"year": 2020})
+	prunedManifest.Format = "parquet"
+
+	predicate := eqPredicate(t, "year", 2024)
+	survivors := PrunePartitions(predicate, []*catalogpb.Manifest{atlasManifest, parquetManifest, prunedManifest})
+
+	if len(survivors) != 2 {
+		t.Fatalf("expected both year=2024 manifests (atlas and parquet) to survive, got %d: %v", len(survivors), survivors)
+	}
+	survivingPaths := map[string]bool{}
+	for _, m := range survivors {
+		survivingPaths[m.GetFilePath()] = true
+	}
+	if !survivingPaths["year=2024/part-0.atlas"] || !survivingPaths["year=2024/part-0.parquet"] {
+		t.Fatalf("expected both formats' year=2024 manifests to survive, got %v", survivors)
+	}
+}
+
 func eqExprMap(column string, intLit int) map[string]any {
 	return map[string]any{"Binary": map[string]any{
 		"left":  map[string]any{"Column": column},

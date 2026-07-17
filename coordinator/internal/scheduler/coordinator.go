@@ -14,6 +14,7 @@ import (
 // dispatch a scan task against it.
 type Manifest struct {
 	FilePath string
+	Format   string
 }
 
 // QueryResult is a fully-executed query: zero or more self-contained Arrow
@@ -92,7 +93,7 @@ func (c *Coordinator) RunCompiled(ctx context.Context, compiled *pb.CompileRespo
 			req := &pb.TaskRequest{
 				TaskId:   fmt.Sprintf("partial-%d", i),
 				PlanJson: compiled.GetPartialPlanJson(),
-				Source:   &pb.TaskRequest_File{File: &pb.FileSource{FilePath: m.FilePath, Columns: columns}},
+				Source:   &pb.TaskRequest_File{File: &pb.FileSource{FilePath: m.FilePath, Columns: columns, Format: m.Format}},
 			}
 			result, err := c.runTaskWithRetry(gctx, req.GetTaskId(), req)
 			if err != nil {

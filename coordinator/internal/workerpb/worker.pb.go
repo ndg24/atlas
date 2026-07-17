@@ -263,6 +263,7 @@ type FileSource struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	FilePath      string                 `protobuf:"bytes,1,opt,name=file_path,json=filePath,proto3" json:"file_path,omitempty"`
 	Columns       []string               `protobuf:"bytes,2,rep,name=columns,proto3" json:"columns,omitempty"` // empty = all columns
+	Format        string                 `protobuf:"bytes,3,opt,name=format,proto3" json:"format,omitempty"`   // "" | "atlas" | "parquet" (future: "iceberg")
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -309,6 +310,13 @@ func (x *FileSource) GetColumns() []string {
 		return x.Columns
 	}
 	return nil
+}
+
+func (x *FileSource) GetFormat() string {
+	if x != nil {
+		return x.Format
+	}
+	return ""
 }
 
 type InlineSource struct {
@@ -510,11 +518,12 @@ const file_worker_proto_rawDesc = "" +
 	"\tplan_json\x18\x02 \x01(\tR\bplanJson\x12.\n" +
 	"\x04file\x18\x03 \x01(\v2\x18.atlas.worker.FileSourceH\x00R\x04file\x124\n" +
 	"\x06inline\x18\x04 \x01(\v2\x1a.atlas.worker.InlineSourceH\x00R\x06inlineB\b\n" +
-	"\x06source\"C\n" +
+	"\x06source\"[\n" +
 	"\n" +
 	"FileSource\x12\x1b\n" +
 	"\tfile_path\x18\x01 \x01(\tR\bfilePath\x12\x18\n" +
-	"\acolumns\x18\x02 \x03(\tR\acolumns\":\n" +
+	"\acolumns\x18\x02 \x03(\tR\acolumns\x12\x16\n" +
+	"\x06format\x18\x03 \x01(\tR\x06format\":\n" +
 	"\fInlineSource\x12*\n" +
 	"\x11arrow_ipc_batches\x18\x01 \x03(\fR\x0farrowIpcBatches\"*\n" +
 	"\vResultBatch\x12\x1b\n" +

@@ -62,6 +62,7 @@ message TaskRequest {
 message FileSource {
   string file_path = 1;
   repeated string columns = 2; // empty = all columns
+  string format = 3; // "" | "atlas" | "parquet" (future: "iceberg")
 }
 
 message InlineSource {

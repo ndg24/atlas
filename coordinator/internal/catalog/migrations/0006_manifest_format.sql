@@ -1,0 +1,1 @@
+ALTER TABLE manifests ADD COLUMN format TEXT NOT NULL DEFAULT 'atlas';

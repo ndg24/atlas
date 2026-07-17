@@ -1,11 +1,40 @@
 //! Per-column [`Statistics`] (min/max/null-count) computed while writing a
 //! `.atlas` file, used later for predicate/partition pruning (Phase 4).
 
-use arrow::array::{Array, BooleanArray, Date32Array, Float64Array, Int64Array, StringArray};
+use anyhow::{Context, Result};
+use arrow::array::{
+    Array, ArrayRef, BooleanArray, Date32Array, Float64Array, Int64Array, StringArray,
+};
 use arrow::compute;
+use arrow::compute::concat;
 use arrow::datatypes::DataType;
+use arrow::record_batch::RecordBatch;
 
 use crate::footer::Statistics;
+
+/// Per-column [`Statistics`] computed directly from a set of in-memory
+/// batches — the same concat-then-`compute_statistics` step
+/// [`crate::writer::write_atlas`] does per column while writing a `.atlas`
+/// file, but usable independently of that writer (e.g. for Parquet ingest,
+/// which has no footer of its own to read stats back from).
+pub fn compute_batches_column_stats(batches: &[RecordBatch]) -> Result<Vec<(String, Statistics)>> {
+    let schema = batches
+        .first()
+        .map(|b| b.schema())
+        .context("compute_batches_column_stats requires at least one batch")?;
+
+    schema
+        .fields()
+        .iter()
+        .enumerate()
+        .map(|(col_idx, field)| {
+            let parts: Vec<ArrayRef> = batches.iter().map(|b| b.column(col_idx).clone()).collect();
+            let part_refs: Vec<&dyn Array> = parts.iter().map(|a| a.as_ref()).collect();
+            let column = concat(&part_refs).context("concatenating column across batches")?;
+            Ok((field.name().clone(), compute_statistics(column.as_ref())))
+        })
+        .collect()
+}
 
 pub fn compute_statistics(array: &dyn Array) -> Statistics {
     let null_count = array.null_count() as u64;

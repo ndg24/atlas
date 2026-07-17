@@ -112,11 +112,15 @@ func (s *Service) CommitSnapshot(ctx context.Context, req *pb.CommitSnapshotRequ
 	}
 
 	for _, m := range req.GetManifests() {
+		format := m.GetFormat()
+		if format == "" {
+			format = "atlas"
+		}
 		if _, err := tx.Exec(ctx,
-			`INSERT INTO manifests (snapshot_id, file_path, partition_values, row_count, file_size_bytes, column_stats)
-			 VALUES ($1, $2, $3, $4, $5, $6)`,
+			`INSERT INTO manifests (snapshot_id, file_path, partition_values, row_count, file_size_bytes, column_stats, format)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 			snap.Id, m.GetFilePath(), m.GetPartitionValuesJson(), m.GetRowCount(),
-			m.GetFileSizeBytes(), m.GetColumnStatsJson(),
+			m.GetFileSizeBytes(), m.GetColumnStatsJson(), format,
 		); err != nil {
 			return nil, fmt.Errorf("inserting manifest %s: %w", m.GetFilePath(), err)
 		}
@@ -156,7 +160,7 @@ func (s *Service) GetCurrentSnapshot(ctx context.Context, req *pb.GetSnapshotReq
 func (s *Service) ListManifests(ctx context.Context, req *pb.ListManifestsRequest) (*pb.ListManifestsResponse, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT id::text, snapshot_id::text, file_path, coalesce(partition_values::text, ''),
-		        row_count, file_size_bytes, column_stats::text
+		        row_count, file_size_bytes, column_stats::text, format
 		 FROM manifests WHERE snapshot_id = $1`,
 		req.GetSnapshotId(),
 	)
@@ -169,7 +173,7 @@ func (s *Service) ListManifests(ctx context.Context, req *pb.ListManifestsReques
 	for rows.Next() {
 		var m pb.Manifest
 		if err := rows.Scan(&m.Id, &m.SnapshotId, &m.FilePath, &m.PartitionValuesJson,
-			&m.RowCount, &m.FileSizeBytes, &m.ColumnStatsJson); err != nil {
+			&m.RowCount, &m.FileSizeBytes, &m.ColumnStatsJson, &m.Format); err != nil {
 			return nil, fmt.Errorf("scanning manifest row: %w", err)
 		}
 		out = append(out, &m)

@@ -1,10 +1,11 @@
 //! `WorkerService` implementation: `Compile` parses SQL into the
 //! partial/combine plan pair (`crate::split`), `ExecuteTask` runs one plan
-//! (JSON-serialized `atlas_query::LogicalPlan`) against either a `.atlas`
-//! file partition or an inline set of already-computed Arrow IPC batches —
-//! the combine step handed back to whichever worker runs it — and
-//! `Heartbeat` reports liveness plus in-flight task count for the
-//! coordinator's worker registry.
+//! (JSON-serialized `atlas_query::LogicalPlan`) against either a file
+//! partition or an inline set of already-computed Arrow IPC batches — the
+//! combine step handed back to whichever worker runs it — and `Heartbeat`
+//! reports liveness plus in-flight task count for the coordinator's worker
+//! registry. A file partition's `format` field (`""`/`"atlas"` or
+//! `"parquet"`) picks which `atlas_format` reader `run_task` calls.
 
 use std::path::Path;
 use std::pin::Pin;
@@ -74,8 +75,24 @@ fn run_task(req: TaskRequest) -> Result<Vec<RecordBatch>> {
             } else {
                 Some(f.columns)
             };
-            atlas_format::read_atlas_file(Path::new(&f.file_path), columns.as_deref())
-                .with_context(|| format!("reading partition file {}", f.file_path))?
+            match f.format.as_str() {
+                "" | "atlas" => {
+                    atlas_format::read_atlas_file(Path::new(&f.file_path), columns.as_deref())
+                        .with_context(|| format!("reading partition file {}", f.file_path))?
+                }
+                "parquet" => {
+                    atlas_format::read_parquet(Path::new(&f.file_path), columns.as_deref())
+                        .with_context(|| {
+                            format!("reading parquet partition file {}", f.file_path)
+                        })?
+                }
+                other => {
+                    return Err(anyhow!(
+                        "unsupported file format {other:?} for {}",
+                        f.file_path
+                    ))
+                }
+            }
         }
         Source::Inline(inline) => {
             let mut batches = Vec::new();
