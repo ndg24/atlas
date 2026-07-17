@@ -12,7 +12,10 @@ csv = { workspace = true }
 anyhow = { workspace = true }
 prost = { workspace = true }
 lz4_flex = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
+apache-avro = "0.21"
+base64 = { workspace = true }
 
 [build-dependencies]
 prost-build = { workspace = true }

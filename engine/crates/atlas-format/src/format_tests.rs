@@ -60,6 +60,27 @@ fn parquet_round_trips_every_supported_type_including_nulls() {
     assert_eq!(read_back[0], original);
 }
 
+/// Phase 5 DoD: writing the same batch through both formats and reading each
+/// back must produce identical `RecordBatch`es — proves `.atlas` and Parquet
+/// are query-equivalent, not just independently round-trippable.
+#[test]
+fn atlas_and_parquet_round_trips_agree_on_identical_source_data() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = batch_with_all_types();
+
+    write_atlas_file(&dir.path().join("same_data.atlas"), &[original.clone()]).unwrap();
+    write_parquet(&dir.path().join("same_data.parquet"), &[original.clone()]).unwrap();
+
+    let from_atlas = read_atlas_file(&dir.path().join("same_data.atlas"), None).unwrap();
+    let from_parquet = read_parquet(&dir.path().join("same_data.parquet"), None).unwrap();
+
+    assert_eq!(from_atlas.len(), 1);
+    assert_eq!(from_parquet.len(), 1);
+    assert_eq!(from_atlas[0], original);
+    assert_eq!(from_parquet[0], original);
+    assert_eq!(from_atlas[0], from_parquet[0]);
+}
+
 #[test]
 fn parquet_reading_subset_of_columns_returns_only_those_columns() {
     let dir = tempfile::tempdir().unwrap();

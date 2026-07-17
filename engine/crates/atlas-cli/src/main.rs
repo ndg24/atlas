@@ -56,6 +56,22 @@ enum Command {
         #[arg(long, default_value = "atlas")]
         format: String,
     },
+    /// Register an existing Iceberg table (created by another engine, e.g.
+    /// Spark or PyIceberg) as an external-table dataset: no data is copied or
+    /// rewritten, only its current snapshot's data files + schema are
+    /// recorded in the catalog, exactly as `ingest` would for files Atlas
+    /// wrote itself.
+    IngestIceberg {
+        /// Path to the table's current `metadata/*.metadata.json` — the
+        /// pointer a real Iceberg catalog (Hive/Glue/REST) would hand back
+        /// for "the current metadata location of this table".
+        #[arg(long)]
+        metadata: PathBuf,
+        #[arg(long)]
+        dataset: String,
+        #[arg(long, default_value = DEFAULT_CATALOG_ADDR)]
+        catalog_addr: String,
+    },
 }
 
 #[tokio::main]
@@ -81,6 +97,11 @@ async fn main() -> Result<()> {
             catalog_addr,
             format,
         } => run_ingest(&file, &dataset, &data_dir, &catalog_addr, &format).await,
+        Command::IngestIceberg {
+            metadata,
+            dataset,
+            catalog_addr,
+        } => run_ingest_iceberg(&metadata, &dataset, &catalog_addr).await,
     }
 }
 
@@ -228,6 +249,64 @@ async fn run_ingest(
 
     println!(
         "ingested {row_count} rows into dataset '{dataset}' (snapshot {})",
+        snapshot.id
+    );
+    Ok(())
+}
+
+/// Register an external Iceberg table's current snapshot into the catalog.
+/// Unlike `run_ingest`, no file is written — `atlas_format::read_iceberg_table`
+/// already resolved the table's own data files, so each becomes a manifest
+/// pointing directly at that existing Parquet file.
+async fn run_ingest_iceberg(metadata: &Path, dataset: &str, catalog_addr: &str) -> Result<()> {
+    let table = atlas_format::read_iceberg_table(metadata)?;
+    if table.data_files.is_empty() {
+        bail!(
+            "iceberg table at {} has no live data files",
+            metadata.display()
+        );
+    }
+
+    let mut client = connect(catalog_addr).await?;
+    let schema_json = serde_json::to_string(&table.schema).context("serializing iceberg schema")?;
+    let dataset_id = ensure_dataset(&mut client, dataset, &schema_json).await?;
+
+    let mut total_rows: i64 = 0;
+    let manifests = table
+        .data_files
+        .iter()
+        .map(|f| {
+            total_rows += f.row_count;
+            Ok(ManifestInput {
+                file_path: f.file_path.to_string_lossy().into_owned(),
+                partition_values_json: serde_json::to_string(&f.partition_values)
+                    .context("serializing iceberg partition values")?,
+                row_count: f.row_count,
+                file_size_bytes: f.file_size_bytes,
+                column_stats_json: serde_json::to_string(&f.column_stats)
+                    .context("serializing iceberg column stats")?,
+                format: "iceberg".to_string(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let file_count = manifests.len();
+
+    let summary_json =
+        serde_json::json!({ "row_count": total_rows, "file_count": file_count }).to_string();
+    let snapshot = client
+        .commit_snapshot(CommitSnapshotRequest {
+            dataset_id,
+            manifest_list_path: metadata.to_string_lossy().into_owned(),
+            operation: "append".to_string(),
+            summary_json,
+            manifests,
+        })
+        .await
+        .context("committing snapshot")?
+        .into_inner();
+
+    println!(
+        "registered iceberg table '{dataset}': {total_rows} rows across {file_count} files (snapshot {})",
         snapshot.id
     );
     Ok(())

@@ -1,6 +1,6 @@
 # Atlas
 
-A distributed analytics engine that turns SQL, natural language, and open-ended research questions into query results — a Rust storage/query engine, a Go coordinator, a Python AI service, and a Next.js dashboard, all sharing one query IR and reading/writing an open columnar format alongside native Parquet read/write (Iceberg interop planned).
+A distributed analytics engine that turns SQL, natural language, and open-ended research questions into query results — a Rust storage/query engine, a Go coordinator, a Python AI service, and a Next.js dashboard, all sharing one query IR and reading/writing an open columnar format alongside native Parquet read/write and external Iceberg table interop.
 
 ## Overview
 
@@ -8,7 +8,7 @@ Data gets ingested into Atlas's own `.atlas` columnar format (or Parquet), split
 
 ## Features
 
-- **Columnar storage with real column pruning** — the `.atlas` format (page-per-column, protobuf footer, min/max/null-count statistics per column) is read by seeking straight to the byte ranges of the requested columns, so scanning 2 of 20 columns only ever touches those 2 columns' pages. Parquet is a first-class alternative format on the same ingestion path (`atlas-cli ingest --format parquet`) — a dataset's manifests carry a `format` field so a per-file worker dispatch can pick the right reader, and a single dataset's manifests can already mix `.atlas` and Parquet files. Iceberg (and Delta) tables created by other engines being queryable as external tables is planned, extending the same `format` field rather than requiring another migration.
+- **Columnar storage with real column pruning** — the `.atlas` format (page-per-column, protobuf footer, min/max/null-count statistics per column) is read by seeking straight to the byte ranges of the requested columns, so scanning 2 of 20 columns only ever touches those 2 columns' pages. Parquet is a first-class alternative format on the same ingestion path (`atlas-cli ingest --format parquet`) — a dataset's manifests carry a `format` field so a per-file worker dispatch can pick the right reader, and a single dataset's manifests can already mix `.atlas` and Parquet files. An existing Iceberg table (created by Spark, PyIceberg, or any other engine) is queryable as an external table via `atlas-cli ingest-iceberg`: Atlas reads the table's own `metadata.json` plus its current snapshot's manifest list and manifests (both Avro), and registers each live data file as a manifest tagged `format = "iceberg"` — no data is copied or rewritten. Delta table interop is the one piece still planned, extending the same `format` field.
 - **Immutable, snapshotted metadata catalog** — every ingest commits a new snapshot (Postgres-backed: `datasets` / `snapshots` / `manifests` / `query_history`) in a single transaction, so a crash mid-commit never leaves the catalog pointing at a half-written snapshot. Queries always resolve against `current_snapshot_id`, giving every query a consistent, point-in-time view of the data.
 - **Distributed, fault-tolerant execution** — the coordinator schedules one task per manifest/partition across registered workers (heartbeat-tracked, least-loaded assignment), streams partial results back over gRPC, and merges them per plan shape — a second aggregation pass for `GROUP BY`, a k-way merge for `ORDER BY` + `LIMIT`. A task whose worker misses its heartbeat or errors mid-stream is retried on a different live worker (up to 3 attempts) without failing the query.
 - **Rule-based query optimization** — column pruning and predicate pushdown rewrite the logical plan itself; partition pruning drops whole manifests using their partition values and column statistics before scheduling; a Redis-backed result cache is keyed on the hash of the *optimized* plan plus the dataset's snapshot id, so equivalent queries hit cache and a new ingest invalidates exactly the datasets it touched. `POST /explain` surfaces the plan before and after optimization, plus which manifests survived pruning and whether the result was served from cache.
@@ -21,7 +21,7 @@ Data gets ingested into Atlas's own `.atlas` columnar format (or Parquet), split
 
 - **One shared `LogicalPlan` IR for every query source** — SQL and natural-language queries both compile to the same protobuf-defined plan (`proto/plan.proto`), with Rust (`prost`), Go, and Python (`grpcio-tools`) structs generated from it rather than hand-written in parallel per language. This is what lets the NL path reuse the SQL path's optimizer and executor completely unchanged.
 - **Arrow as the type system, not a custom one** — schema types are Arrow's own (`arrow::datatypes::{DataType, Field, Schema}`) re-exported directly; a parallel type system would only ever mirror Arrow's.
-- **The `.atlas` format is deliberately Parquet/Iceberg-shaped** — footer-plus-pages-plus-statistics, Hive-style partition paths — so that Phase 5's Parquet/Iceberg interop is an integration exercise against `parquet-rs`/`iceberg-rust`, not a fight against an incompatible internal format. Reading an external Iceberg table means translating its manifests into Atlas's own `Manifest` struct once, after which pruning, scheduling, and execution don't know or care that the source wasn't Atlas's own writer.
+- **The `.atlas` format is deliberately Parquet/Iceberg-shaped** — footer-plus-pages-plus-statistics, Hive-style partition paths — so that Phase 5's Parquet/Iceberg interop was an integration exercise, not a fight against an incompatible internal format. Reading an external Iceberg table translates its manifests into Atlas's own `Manifest` shape once (`atlas_format::read_iceberg_table`, a from-spec reader over `apache-avro` rather than a wrapper over the full `iceberg-rust` crate, whose catalog/async-runtime machinery this read-only, filesystem-pointed path doesn't need), after which pruning, scheduling, and execution don't know or care that the source wasn't Atlas's own writer. Iceberg's own single-value bounds serialization (LE bytes for int/long/float/double, raw UTF-8 for strings) is already byte-identical to Atlas's own column-stats encoding, so bounds pass through unchanged rather than needing a decode/re-encode step.
 - **Catalog commits are transactional, not eventually consistent** — inserting a snapshot row, its manifests, and updating `datasets.current_snapshot_id` all happen in one Postgres transaction, so queries never observe a partially-committed snapshot.
 - **Coordinator and catalog are separate services even though they're usually co-deployed** — the catalog is passive metadata storage; the coordinator is an active scheduler. Keeping them as separate binaries keeps that distinction real rather than nominal.
 - **Two-phase distributed aggregation over shuffling raw rows** — each worker computes a partial aggregate for its partition; the coordinator combines partials into the final result, so `GROUP BY` over a distributed scan never requires moving raw rows between workers.
@@ -38,7 +38,7 @@ Data gets ingested into Atlas's own `.atlas` columnar format (or Parquet), split
 
 | Layer | Tech |
 |---|---|
-| Engine (Rust) | `arrow` / `arrow-csv`, `sqlparser`, `parquet-rs` (`iceberg-rust`/`delta-rs` planned), `lz4_flex` / `zstd`, `object_store`, `tonic` (gRPC), `clap` |
+| Engine (Rust) | `arrow` / `arrow-csv`, `sqlparser`, `parquet-rs`, `apache-avro` (Iceberg manifest reads; `delta-rs` planned), `lz4_flex` / `zstd`, `object_store`, `tonic` (gRPC), `clap` |
 | Coordinator (Go) | Go 1.22+, `pgx` (Postgres), `go-redis`, `golang-migrate`/`goose`, gRPC + REST handlers, `testcontainers-go` for integration tests |
 | AI service (Python) | Python 3.11+, `litellm` (Anthropic/OpenAI/Gemini/Ollama behind one adapter), `grpc.aio`, `pyarrow`, `pgvector`, Pydantic |
 | Metadata, cache & retrieval | Postgres (catalog: datasets/snapshots/manifests/query_history), Redis (result cache), `pgvector` (literature embeddings) |
@@ -126,6 +126,10 @@ No hosted-LLM API key is required if `ATLAS_LLM_PROVIDER=ollama` — the local m
 # ingest a CSV into the columnar format and register a snapshot
 atlas-cli ingest --file patients.csv --dataset patients
 
+# register an existing Iceberg table (created by another engine) as an
+# external-table dataset -- no data copied, just its current snapshot's files
+atlas-cli ingest-iceberg --metadata /path/to/table/metadata/00002-....metadata.json --dataset patients_iceberg
+
 # query by SQL — goes through optimize -> schedule -> distributed execute
 atlas-cli query --dataset patients --sql "SELECT diagnosis, COUNT(*) AS n FROM t GROUP BY diagnosis ORDER BY n DESC"
 
@@ -161,7 +165,7 @@ cargo test --workspace --manifest-path engine/Cargo.toml
 (cd ai-service && pytest)
 ```
 
-- **Rust**: unit tests per crate (schema inference, format round-trips, per-operator execution, optimizer rules) plus Criterion benchmarks that assert pruning reduces bytes actually read, not just wall-clock time.
+- **Rust**: unit tests per crate (schema inference, format round-trips, per-operator execution, optimizer rules) plus Criterion benchmarks that assert pruning reduces bytes actually read, not just wall-clock time. `atlas-format`'s Iceberg reader is tested against a real table fixture (`engine/crates/atlas-format/tests/fixtures/iceberg_sample`, generated by PyIceberg — an independent writer, not Atlas's own) asserting schema translation, per-partition row counts, and column-stats bytes decode correctly; the worker crate separately proves a manifest tagged `format = "iceberg"` dispatches to the Parquet reader and executes a real query over it.
 - **Go**: `testcontainers-go` spins up a real Postgres for catalog/scheduler tests — snapshot chaining, transactional commits, partition pruning against real manifests, and a worker-killed-mid-query fault-tolerance test.
 - **Python**: golden-file structural tests for NL→plan (assert correct node types/columns/aggregates, not exact LLM text) against a mocked provider by default, with real multi-provider runs (including Ollama) gated behind an integration-test flag; insight and suggested-question tests assert every suggested question compiles to a valid plan and every narrated number traces back to a supplied finding.
 - **Cross-service**: an integration test ingests a partitioned dataset and runs a `GROUP BY` through the full coordinator → N-worker → merge path, asserting the distributed result exactly matches a known-correct single-node baseline.

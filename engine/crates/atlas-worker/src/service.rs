@@ -4,8 +4,10 @@
 //! partition or an inline set of already-computed Arrow IPC batches — the
 //! combine step handed back to whichever worker runs it — and `Heartbeat`
 //! reports liveness plus in-flight task count for the coordinator's worker
-//! registry. A file partition's `format` field (`""`/`"atlas"` or
-//! `"parquet"`) picks which `atlas_format` reader `run_task` calls.
+//! registry. A file partition's `format` field (`""`/`"atlas"`, `"parquet"`,
+//! or `"iceberg"`) picks which `atlas_format` reader `run_task` calls —
+//! `"iceberg"` reads via `read_parquet` too, since an Iceberg manifest's data
+//! file is itself Parquet; only the catalog's provenance tag differs.
 
 use std::path::Path;
 use std::pin::Pin;
@@ -80,7 +82,10 @@ fn run_task(req: TaskRequest) -> Result<Vec<RecordBatch>> {
                     atlas_format::read_atlas_file(Path::new(&f.file_path), columns.as_deref())
                         .with_context(|| format!("reading partition file {}", f.file_path))?
                 }
-                "parquet" => {
+                "parquet" | "iceberg" => {
+                    // An Iceberg-sourced manifest's file is a data file the
+                    // external table already wrote in Parquet — the same
+                    // reader as a native Parquet manifest applies unchanged.
                     atlas_format::read_parquet(Path::new(&f.file_path), columns.as_deref())
                         .with_context(|| {
                             format!("reading parquet partition file {}", f.file_path)
@@ -171,7 +176,61 @@ impl WorkerService for WorkerServiceImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worker_pb::FileSource;
     use atlas_format::{DataType, Field, Schema};
+
+    /// A manifest tagged `format: "iceberg"` names a data file the external
+    /// table already wrote as Parquet — proves `run_task` dispatches it to
+    /// `read_parquet` (not `read_atlas_file`, and not an error) and that the
+    /// resulting rows are correct, closing the loop from
+    /// `atlas_format::read_iceberg_table`'s manifest translation through to
+    /// actual query execution.
+    #[test]
+    fn iceberg_tagged_manifest_reads_via_the_parquet_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data.parquet");
+        let schema = Schema::new(vec![
+            Field::new("diagnosis", DataType::Utf8, false),
+            Field::new("cost", DataType::Float64, false),
+        ]);
+        let batch = arrow::record_batch::RecordBatch::try_new(
+            std::sync::Arc::new(schema.clone()),
+            vec![
+                std::sync::Arc::new(arrow::array::StringArray::from(vec!["flu", "cold"])),
+                std::sync::Arc::new(arrow::array::Float64Array::from(vec![100.0, 50.0])),
+            ],
+        )
+        .unwrap();
+        atlas_format::write_parquet(&path, &[batch]).unwrap();
+
+        let compiled = compile_query(
+            "SELECT diagnosis, cost FROM t",
+            &serde_json::to_string(&schema).unwrap(),
+        )
+        .unwrap();
+
+        let result = run_task(TaskRequest {
+            task_id: "t".to_string(),
+            plan_json: compiled.partial_plan_json,
+            source: Some(Source::File(FileSource {
+                file_path: path.to_string_lossy().into_owned(),
+                columns: vec![],
+                format: "iceberg".to_string(),
+            })),
+        })
+        .unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].num_rows(), 2);
+        let diagnosis = result[0]
+            .column_by_name("diagnosis")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<arrow::array::StringArray>()
+            .unwrap();
+        assert_eq!(diagnosis.value(0), "flu");
+        assert_eq!(diagnosis.value(1), "cold");
+    }
 
     fn schema_json() -> String {
         let schema = Schema::new(vec![

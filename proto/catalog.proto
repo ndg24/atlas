@@ -44,7 +44,7 @@ message Manifest {
   int64 row_count = 5;
   int64 file_size_bytes = 6;
   string column_stats_json = 7; // {column: {min, max, null_count}}
-  string format = 8; // "atlas" | "parquet" (future: "iceberg")
+  string format = 8; // "atlas" | "parquet" | "iceberg"
 }
 
 message CreateDatasetRequest {
@@ -76,7 +76,7 @@ message ManifestInput {
   int64 row_count = 3;
   int64 file_size_bytes = 4;
   string column_stats_json = 5;
-  string format = 6; // "atlas" | "parquet" (future: "iceberg")
+  string format = 6; // "atlas" | "parquet" | "iceberg"
 }
 
 message GetSnapshotRequest {

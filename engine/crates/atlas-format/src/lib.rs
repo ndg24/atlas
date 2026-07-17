@@ -4,6 +4,7 @@
 pub mod footer;
 #[cfg(test)]
 mod format_tests;
+mod iceberg;
 mod page;
 mod parquet;
 pub mod partition;
@@ -14,6 +15,7 @@ mod writer;
 pub use arrow::datatypes::{DataType, Field, Schema};
 pub use footer::page_meta::Compression;
 pub use footer::{ColumnChunk, FileFooter, PageMeta, Statistics};
+pub use iceberg::{read_iceberg_table, IcebergDataFile, IcebergTable};
 pub use parquet::{read_parquet, write_parquet};
 pub use partition::{write_partitioned, PartitionValues};
 pub use reader::{read_atlas_file, read_footer};
