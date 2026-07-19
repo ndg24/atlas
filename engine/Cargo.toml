@@ -20,7 +20,7 @@ arrow-csv = "53"
 parquet = "53"
 csv = "1"
 sqlparser = "0.51"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 anyhow = "1"
 thiserror = "1"
 prost = "0.13"
@@ -37,3 +37,11 @@ bytes = "1"
 uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-opentelemetry = "0.28"
+opentelemetry = "0.27"
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
+opentelemetry-otlp = "0.27"
+metrics = "0.24"
+metrics-exporter-prometheus = "0.16"

@@ -12,14 +12,18 @@
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicI32, Ordering};
+use std::time::Instant;
 
 use anyhow::{anyhow, Context, Result};
 use arrow::record_batch::RecordBatch;
 use tokio_stream::Stream;
 use tonic::{Request, Response, Status};
+use tracing::Instrument;
 
 use crate::ipc;
+use crate::obs_metrics;
 use crate::split::split_for_distribution;
+use crate::telemetry::span_from_metadata;
 use crate::worker_pb::worker_service_server::WorkerService;
 use crate::worker_pb::{
     task_request::Source, CompileRequest, CompileResponse, HeartbeatRequest, HeartbeatResponse,
@@ -120,56 +124,83 @@ impl WorkerService for WorkerServiceImpl {
         &self,
         request: Request<CompileRequest>,
     ) -> Result<Response<CompileResponse>, Status> {
-        let req = request.into_inner();
-        let response = match compile_query(&req.sql, &req.schema_json) {
-            Ok(compiled) => CompileResponse {
-                needs_combine: compiled.combine_plan_json.is_some(),
-                partial_plan_json: compiled.partial_plan_json,
-                combine_plan_json: compiled.combine_plan_json.unwrap_or_default(),
-                logical_plan_json: compiled.logical_plan_json,
-                optimized_plan_json: compiled.optimized_plan_json,
-                error: String::new(),
-            },
-            Err(err) => CompileResponse {
-                partial_plan_json: String::new(),
-                combine_plan_json: String::new(),
-                logical_plan_json: String::new(),
-                optimized_plan_json: String::new(),
-                needs_combine: false,
-                error: format!("{err:#}"),
-            },
-        };
-        Ok(Response::new(response))
+        let span = span_from_metadata(request.metadata(), "Compile");
+        async move {
+            let req = request.into_inner();
+            let response = match compile_query(&req.sql, &req.schema_json) {
+                Ok(compiled) => CompileResponse {
+                    needs_combine: compiled.combine_plan_json.is_some(),
+                    partial_plan_json: compiled.partial_plan_json,
+                    combine_plan_json: compiled.combine_plan_json.unwrap_or_default(),
+                    logical_plan_json: compiled.logical_plan_json,
+                    optimized_plan_json: compiled.optimized_plan_json,
+                    error: String::new(),
+                },
+                Err(err) => CompileResponse {
+                    partial_plan_json: String::new(),
+                    combine_plan_json: String::new(),
+                    logical_plan_json: String::new(),
+                    optimized_plan_json: String::new(),
+                    needs_combine: false,
+                    error: format!("{err:#}"),
+                },
+            };
+            Ok(Response::new(response))
+        }
+        .instrument(span)
+        .await
     }
 
     async fn execute_task(
         &self,
         request: Request<TaskRequest>,
     ) -> Result<Response<Self::ExecuteTaskStream>, Status> {
-        let req = request.into_inner();
-        let task_id = req.task_id.clone();
+        let span = span_from_metadata(request.metadata(), "ExecuteTask");
+        async move {
+            let req = request.into_inner();
+            let task_id = req.task_id.clone();
 
-        self.in_flight.fetch_add(1, Ordering::SeqCst);
-        let result = run_task(req);
-        self.in_flight.fetch_sub(1, Ordering::SeqCst);
+            let in_flight = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            obs_metrics::set_in_flight(in_flight);
+            let started = Instant::now();
+            let result = run_task(req);
+            let in_flight = self.in_flight.fetch_sub(1, Ordering::SeqCst) - 1;
+            obs_metrics::set_in_flight(in_flight);
 
-        let batches =
-            result.map_err(|err| Status::internal(format!("task {task_id} failed: {err:#}")))?;
-        let arrow_ipc = ipc::encode_batches(&batches)
-            .map_err(|err| Status::internal(format!("task {task_id} encode failed: {err:#}")))?;
+            let outcome = if result.is_ok() { "success" } else { "failure" };
+            metrics::histogram!("atlas_worker_task_duration_seconds", "method" => "execute_task", "outcome" => outcome)
+                .record(started.elapsed().as_secs_f64());
+            metrics::counter!("atlas_worker_tasks_total", "method" => "execute_task", "outcome" => outcome)
+                .increment(1);
 
-        let stream = tokio_stream::iter(vec![Ok(ResultBatch { arrow_ipc })]);
-        Ok(Response::new(Box::pin(stream)))
+            let batches = result
+                .map_err(|err| Status::internal(format!("task {task_id} failed: {err:#}")))?;
+            let arrow_ipc = ipc::encode_batches(&batches).map_err(|err| {
+                Status::internal(format!("task {task_id} encode failed: {err:#}"))
+            })?;
+
+            let stream = tokio_stream::iter(vec![Ok(ResultBatch { arrow_ipc })]);
+            Ok(Response::new(
+                Box::pin(stream) as Self::ExecuteTaskStream
+            ))
+        }
+        .instrument(span)
+        .await
     }
 
     async fn heartbeat(
         &self,
-        _request: Request<HeartbeatRequest>,
+        request: Request<HeartbeatRequest>,
     ) -> Result<Response<HeartbeatResponse>, Status> {
-        Ok(Response::new(HeartbeatResponse {
-            alive: true,
-            in_flight_tasks: self.in_flight.load(Ordering::SeqCst),
-        }))
+        let span = span_from_metadata(request.metadata(), "Heartbeat");
+        async move {
+            Ok(Response::new(HeartbeatResponse {
+                alive: true,
+                in_flight_tasks: self.in_flight.load(Ordering::SeqCst),
+            }))
+        }
+        .instrument(span)
+        .await
     }
 }
 

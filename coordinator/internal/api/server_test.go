@@ -18,12 +18,14 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 
 	"atlas/coordinator/internal/api"
+	"atlas/coordinator/internal/auth"
 	"atlas/coordinator/internal/cache"
 	catalogpb "atlas/coordinator/internal/catalogpb"
 	"atlas/coordinator/internal/scheduler"
@@ -31,6 +33,24 @@ import (
 )
 
 func stringsReader(s string) *strings.Reader { return strings.NewReader(s) }
+
+// testSecret is the fixed JWT signing secret every test server in this file
+// is built with.
+var testSecret = []byte("test-secret")
+
+// authedRequest builds req exactly like httptest.NewRequest, plus a valid
+// bearer token signed with testSecret — the shape every route needs now
+// that Routes() is wrapped in authMiddleware.
+func authedRequest(t *testing.T, method, target string, body *strings.Reader) *http.Request {
+	t.Helper()
+	req := httptest.NewRequest(method, target, body)
+	token, err := auth.Generate(testSecret, "test-user", "test-workspace", time.Hour)
+	if err != nil {
+		t.Fatalf("generating test token: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	return req
+}
 
 // --- fake catalog client: a plain struct satisfying the generated
 // CatalogServiceClient interface directly, no network involved. ---
@@ -146,7 +166,7 @@ func newTestServer(t *testing.T, catalog *fakeCatalog, workerAddr string) (*api.
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	resultCache := cache.NewWithClient(rdb, 0)
 
-	return api.NewServer(catalog, coordinator, nil, resultCache), resultCache
+	return api.NewServer(catalog, coordinator, nil, resultCache, testSecret), resultCache
 }
 
 func TestHandleExplain_PrunesPartitionsAndReportsCacheMiss(t *testing.T) {
@@ -165,7 +185,7 @@ func TestHandleExplain_PrunesPartitionsAndReportsCacheMiss(t *testing.T) {
 	server, _ := newTestServer(t, catalog, workerAddr)
 
 	body := `{"dataset":"patients","sql":"SELECT diagnosis FROM t WHERE year = 2024"}`
-	req := httptest.NewRequest(http.MethodPost, "/explain", stringsReader(body))
+	req := authedRequest(t, http.MethodPost, "/explain", stringsReader(body))
 	rec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(rec, req)
 
@@ -216,7 +236,7 @@ func TestHandleExplain_ReportsCacheHitOnceEntryExists(t *testing.T) {
 	}
 
 	body := `{"dataset":"patients","sql":"SELECT diagnosis FROM t WHERE year = 2024"}`
-	req := httptest.NewRequest(http.MethodPost, "/explain", stringsReader(body))
+	req := authedRequest(t, http.MethodPost, "/explain", stringsReader(body))
 	rec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(rec, req)
 
@@ -228,5 +248,50 @@ func TestHandleExplain_ReportsCacheHitOnceEntryExists(t *testing.T) {
 	}
 	if !resp.CacheHit {
 		t.Fatal("expected cache_hit=true once a matching entry was seeded")
+	}
+}
+
+func TestAuthMiddleware_RejectsMissingToken(t *testing.T) {
+	catalog := &fakeCatalog{schemaJSON: `{"fields":[]}`, snapshotID: "snap-1"}
+	server, _ := newTestServer(t, catalog, startFakeWorker(t, ""))
+
+	req := httptest.NewRequest(http.MethodGet, "/datasets", nil)
+	rec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 with no Authorization header, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAuthMiddleware_RejectsGarbageToken(t *testing.T) {
+	catalog := &fakeCatalog{schemaJSON: `{"fields":[]}`, snapshotID: "snap-1"}
+	server, _ := newTestServer(t, catalog, startFakeWorker(t, ""))
+
+	req := httptest.NewRequest(http.MethodGet, "/datasets", nil)
+	req.Header.Set("Authorization", "Bearer not-a-real-token")
+	rec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 with a garbage token, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAuthMiddleware_RejectsExpiredToken(t *testing.T) {
+	catalog := &fakeCatalog{schemaJSON: `{"fields":[]}`, snapshotID: "snap-1"}
+	server, _ := newTestServer(t, catalog, startFakeWorker(t, ""))
+
+	token, err := auth.Generate(testSecret, "test-user", "test-workspace", -time.Hour)
+	if err != nil {
+		t.Fatalf("generating expired test token: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/datasets", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 with an expired token, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

@@ -3,11 +3,26 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"golang.org/x/sync/errgroup"
 
 	"atlas/coordinator/internal/planjson"
 	pb "atlas/coordinator/internal/workerpb"
+)
+
+var (
+	taskDispatchDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "atlas_task_dispatch_duration_seconds",
+		Help: "Duration of dispatching one task (including retries) to a worker, by outcome.",
+	}, []string{"outcome"})
+
+	taskDispatchTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "atlas_task_dispatch_total",
+		Help: "Count of task dispatches to workers, by outcome.",
+	}, []string{"outcome"})
 )
 
 // Manifest is the subset of a catalog manifest the scheduler needs to
@@ -155,6 +170,20 @@ func (c *Coordinator) executeOnWorker(ctx context.Context, addr string, req *pb.
 // itself fails (the assigned worker errored mid-task or is unreachable) —
 // so one dead worker never fails the whole query.
 func (c *Coordinator) runTaskWithRetry(ctx context.Context, taskID string, req *pb.TaskRequest) ([]byte, error) {
+	started := time.Now()
+	result, err := c.doRunTaskWithRetry(ctx, taskID, req)
+
+	outcome := "success"
+	if err != nil {
+		outcome = "failure"
+	}
+	taskDispatchDuration.WithLabelValues(outcome).Observe(time.Since(started).Seconds())
+	taskDispatchTotal.WithLabelValues(outcome).Inc()
+
+	return result, err
+}
+
+func (c *Coordinator) doRunTaskWithRetry(ctx context.Context, taskID string, req *pb.TaskRequest) ([]byte, error) {
 	const maxAttempts = 3
 	tried := map[string]bool{}
 	var lastErr error

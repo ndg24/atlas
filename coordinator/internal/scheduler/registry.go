@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -41,7 +42,15 @@ type Registry struct {
 func NewRegistry(addrs []string) (*Registry, error) {
 	workers := make(map[string]*workerState, len(addrs))
 	for _, addr := range addrs {
-		conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		// otelgrpc's client stats handler injects the current trace context
+		// (a W3C traceparent header) into every outgoing call's gRPC
+		// metadata — this is what lets atlas-worker's telemetry module
+		// (engine/crates/atlas-worker/src/telemetry.rs) pick up the
+		// coordinator's trace id and attach its own spans to the same trace.
+		conn, err := grpc.NewClient(addr,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+		)
 		if err != nil {
 			return nil, fmt.Errorf("dialing worker %s: %w", addr, err)
 		}

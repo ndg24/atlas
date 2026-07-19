@@ -23,13 +23,23 @@ func NewStore(pool *pgxpool.Pool) *Store {
 // Start inserts a "running" query_history row and returns its id.
 // logicalPlanJSON may be a placeholder ("{}") if the plan isn't known yet —
 // the column is NOT NULL, and SetPlan can fill in the real one once
-// compiled.
-func (s *Store) Start(ctx context.Context, source, rawInput, logicalPlanJSON string) (string, error) {
+// compiled. workspaceID/userID come from the request's JWT claims (see
+// internal/auth) and are stored as NULL when empty — e.g. in tests that
+// don't go through the auth middleware.
+func (s *Store) Start(ctx context.Context, source, rawInput, logicalPlanJSON, workspaceID, userID string) (string, error) {
+	var workspaceArg, userArg any
+	if workspaceID != "" {
+		workspaceArg = workspaceID
+	}
+	if userID != "" {
+		userArg = userID
+	}
+
 	var id string
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO query_history (source, raw_input, logical_plan_json, status)
-		 VALUES ($1, $2, $3, 'running') RETURNING id::text`,
-		source, rawInput, logicalPlanJSON,
+		`INSERT INTO query_history (source, raw_input, logical_plan_json, status, workspace_id, user_id)
+		 VALUES ($1, $2, $3, 'running', $4, $5) RETURNING id::text`,
+		source, rawInput, logicalPlanJSON, workspaceArg, userArg,
 	).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("starting query_history row: %w", err)
@@ -77,12 +87,14 @@ type Entry struct {
 	Status      string  `json:"status"`
 	DurationMs  *int    `json:"duration_ms"`
 	Error       *string `json:"error"`
+	WorkspaceID *string `json:"workspace_id"`
+	UserID      *string `json:"user_id"`
 }
 
 // List returns the most recent `limit` query_history rows, newest first.
 func (s *Store) List(ctx context.Context, limit int) ([]Entry, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id::text, submitted_at::text, source, raw_input, status, duration_ms, error
+		`SELECT id::text, submitted_at::text, source, raw_input, status, duration_ms, error, workspace_id::text, user_id::text
 		 FROM query_history ORDER BY submitted_at DESC LIMIT $1`, limit,
 	)
 	if err != nil {
@@ -93,7 +105,7 @@ func (s *Store) List(ctx context.Context, limit int) ([]Entry, error) {
 	out := []Entry{}
 	for rows.Next() {
 		var e Entry
-		if err := rows.Scan(&e.ID, &e.SubmittedAt, &e.Source, &e.RawInput, &e.Status, &e.DurationMs, &e.Error); err != nil {
+		if err := rows.Scan(&e.ID, &e.SubmittedAt, &e.Source, &e.RawInput, &e.Status, &e.DurationMs, &e.Error, &e.WorkspaceID, &e.UserID); err != nil {
 			return nil, fmt.Errorf("scanning query_history row: %w", err)
 		}
 		out = append(out, e)

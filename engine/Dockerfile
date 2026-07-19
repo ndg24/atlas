@@ -12,4 +12,5 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /build/engine/target/release/atlas-worker /usr/local/bin/atlas-worker
+EXPOSE 9100 9101
 ENTRYPOINT ["/usr/local/bin/atlas-worker"]

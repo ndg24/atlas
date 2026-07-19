@@ -15,7 +15,7 @@ Data gets ingested into Atlas's own `.atlas` columnar format (or Parquet), split
 - **Natural-language querying, same execution path as SQL** — an LLM (Anthropic, OpenAI, Gemini, or a local Ollama model, selected purely by environment variable through a provider-agnostic layer) compiles a question into the identical `LogicalPlan` a SQL query would produce, validated against the protobuf schema and re-prompted once on failure. From there it runs through the unchanged optimize → schedule → execute path — an NL query and its SQL equivalent return byte-identical results.
 - **AI analyst** — dataset summaries, outlier detection, trend detection, and data-quality flags (null rates, zero-variance columns, duplicates) are computed as plain statistical functions over query results, not invented by an LLM; the LLM's only job is narrating those pre-computed findings into readable sentences, one claim per input finding. Suggested example questions are only ever shown after they've been round-tripped through the NL compiler and confirmed to produce a valid, runnable plan.
 - **Multi-agent research mode** — a sequential Planner → Query → Execution → Visualization → Explanation → Report pipeline decomposes an open-ended question into structured sub-questions (run through the existing query engine) and literature sub-questions (answered via `pgvector`-backed retrieval over an ingested corpus). The final report tags every claim `[data]` or `[literature:doc_id]`, so structured results and retrieved literature are never blended without attribution.
-- **Observability and auth from day one of the API surface** — OpenTelemetry traces a request from the REST entry point through gRPC calls to workers and the AI service under one trace id; Prometheus tracks worker task duration, cache hit rate, and LLM latency/token counts; JWT-based auth with workspace scoping guards the coordinator's REST API.
+- **Auth and observability on the coordinator/catalog/worker path** — every coordinator REST route requires a JWT bearer token (`internal/auth`, `internal/api/middleware.go`); there's no login flow yet, so tokens come from a dev CLI (`go run ./cmd/tokengen`) signed against a required `JWT_SECRET`, and a `workspaces`/`users` schema exists with a single seeded default workspace — groundwork for per-workspace scoping, not yet enforced on catalog reads. OpenTelemetry traces a request from the REST entry point through gRPC to the catalog and, via a W3C `traceparent` header riding in gRPC metadata, into the Rust worker — one trace id spans all three, visible in the `jaeger` service docker-compose adds when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (unset by default outside compose, so every binary still runs standalone with zero extra infra). Prometheus (`GET /metrics` on the coordinator, a dedicated port on the catalog and each worker) tracks cache hit/miss, task dispatch duration/count, gRPC request duration/count, and worker task duration/in-flight count — LLM latency/token counts will follow once Phase 6's AI service exists. Neither the AI-service trace hop nor LLM metrics exist yet, since there's no AI service (see below).
 
 ## Architecture & Design Decisions
 
@@ -46,7 +46,7 @@ Data gets ingested into Atlas's own `.atlas` columnar format (or Parquet), split
 | SDK / CLI | Go CLI (`sdk/cli`, thin client over the generated proto/REST contract), Python SDK (`sdk/python`) |
 | Contracts | Protobuf (`proto/plan.proto`, `format.proto`, `catalog.proto`, `worker.proto`, `ai.proto`) — source of truth for cross-language types, codegen via `prost` (Rust), `protoc-gen-go` (Go), `grpcio-tools` (Python) |
 | Infra | Docker Compose (Postgres, MinIO, Redis, coordinator, N workers, Ollama), Kubernetes manifests (`deploy/k8s`) for production |
-| Observability & auth | OpenTelemetry (trace propagation from REST → gRPC → AI service), Prometheus metrics per component, JWT auth with workspace scoping |
+| Observability & auth | OpenTelemetry (trace propagation from REST → catalog gRPC → worker gRPC via a `traceparent` header, opt-in via `OTEL_EXPORTER_OTLP_ENDPOINT`; AI-service hop pending Phase 6), Prometheus per component (`golang-jwt/jwt`, `client_golang` on the Go side; `metrics`/`metrics-exporter-prometheus` on the Rust side), JWT auth (groundwork for workspace scoping — single default workspace, no login flow yet) |
 | Testing | `cargo test` + Criterion benches (Rust), `go test` with `testcontainers-go` against real Postgres (Go), golden-file NL→plan tests with a mocked LLM by default (Python), full-stack integration tests over Docker Compose |
 
 ## Layout
@@ -124,20 +124,31 @@ No hosted-LLM API key is required if `ATLAS_LLM_PROVIDER=ollama` — the local m
 
 ```
 # ingest a CSV into the columnar format and register a snapshot
+# (ingest talks to the catalog service directly over gRPC, not the
+# coordinator's REST API, so it doesn't need a token)
 atlas-cli ingest --file patients.csv --dataset patients
 
 # register an existing Iceberg table (created by another engine) as an
 # external-table dataset -- no data copied, just its current snapshot's files
 atlas-cli ingest-iceberg --metadata /path/to/table/metadata/00002-....metadata.json --dataset patients_iceberg
 
+# every coordinator REST route requires a bearer token -- there's no login
+# flow yet, so mint a dev token against the coordinator's JWT_SECRET
+export ATLAS_TOKEN=$(JWT_SECRET=<same secret coordinator is running with> go run ./coordinator/cmd/tokengen)
+
 # query by SQL — goes through optimize -> schedule -> distributed execute
 atlas-cli query --dataset patients --sql "SELECT diagnosis, COUNT(*) AS n FROM t GROUP BY diagnosis ORDER BY n DESC"
 
+# inspect optimization: pre/post plan, manifests pruned, cache hit
+curl -X POST localhost:8080/explain -H "Authorization: Bearer $ATLAS_TOKEN" -d '{"dataset": "patients", "sql": "..."}'
+
+# Prometheus metrics (unauthenticated -- scrapers don't carry a bearer token)
+curl localhost:8080/metrics
+
+# --- everything below is not implemented yet (Phases 6-8) ---
+
 # query by natural language -- compiles to the same LogicalPlan as SQL
 curl -X POST localhost:8080/query/nl -d '{"dataset": "patients", "question": "which diagnosis is most common?"}'
-
-# inspect optimization: pre/post plan, manifests pruned, cache hit
-curl -X POST localhost:8080/explain -d '{"dataset": "patients", "sql": "..."}'
 
 # statistically-grounded summary + LLM-narrated insights
 curl -X POST localhost:8080/datasets/patients/summary
@@ -173,13 +184,17 @@ cargo test --workspace --manifest-path engine/Cargo.toml
 
 ## Deployment
 
-`deploy/docker-compose.yml` runs the full stack locally: Postgres, MinIO, Redis, the coordinator, a configurable number of worker replicas, the AI service, Ollama, and the dashboard. `deploy/k8s/` holds the equivalent Kubernetes manifests for production, scaling workers and the coordinator independently.
+`deploy/docker-compose.yml` runs the stack built so far locally: Postgres, MinIO, Redis, the catalog service, the coordinator, 3 workers, and — for the auth/observability work described above — Jaeger (trace UI) and Prometheus (metrics scrape, config in `deploy/prometheus.yml`). The AI service, Ollama, and the dashboard aren't in it yet, since none of them exist yet (Phases 6+). `deploy/k8s/` holds the equivalent Kubernetes manifests for production, scaling workers and the coordinator independently.
 
 | Service | Protocol | Default port |
 |---|---|---|
 | Coordinator (REST) | HTTP/JSON | 8080 |
 | Coordinator (internal) | gRPC | 9090 |
 | Catalog service | gRPC | 9091 |
+| Catalog metrics (`/metrics`) | HTTP | 9095 |
 | Worker | gRPC | 9100+ (one per worker) |
+| Worker metrics (`/metrics`) | HTTP | 9101+ (one per worker) |
 | AI service | gRPC | 9092 |
 | Dashboard | HTTP | 3000 |
+| Jaeger UI / OTLP gRPC | HTTP / gRPC | 16686 / 4317 |
+| Prometheus UI | HTTP | 9090 |

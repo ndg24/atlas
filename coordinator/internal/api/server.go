@@ -22,6 +22,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
 	"atlas/coordinator/internal/cache"
 	catalogpb "atlas/coordinator/internal/catalogpb"
 	"atlas/coordinator/internal/history"
@@ -34,22 +37,36 @@ type Server struct {
 	coordinator *scheduler.Coordinator
 	history     *history.Store
 	cache       *cache.ResultCache
+	authSecret  []byte
 }
 
 // NewServer wires up the REST API. resultCache may be nil (caching disabled)
-// — every cache access below is guarded accordingly.
-func NewServer(catalog catalogpb.CatalogServiceClient, coordinator *scheduler.Coordinator, historyStore *history.Store, resultCache *cache.ResultCache) *Server {
-	return &Server{catalog: catalog, coordinator: coordinator, history: historyStore, cache: resultCache}
+// — every cache access below is guarded accordingly. authSecret signs/
+// validates the bearer tokens every route below requires.
+func NewServer(catalog catalogpb.CatalogServiceClient, coordinator *scheduler.Coordinator, historyStore *history.Store, resultCache *cache.ResultCache, authSecret []byte) *Server {
+	return &Server{catalog: catalog, coordinator: coordinator, history: historyStore, cache: resultCache, authSecret: authSecret}
 }
 
+// Routes returns the full REST API. The application routes are gated by
+// authMiddleware (every one of them requires a valid bearer token);
+// GET /metrics is mounted outside that auth wrapper since Prometheus
+// scrapers don't carry a bearer token. The whole thing is wrapped in
+// otelhttp so every request gets a root trace span, which is what lets the
+// trace id it carries propagate through the coordinator's outbound gRPC
+// calls to the catalog and workers.
 func (s *Server) Routes() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /query", s.handleQuery)
-	mux.HandleFunc("POST /explain", s.handleExplain)
-	mux.HandleFunc("POST /datasets", s.handleCreateDataset)
-	mux.HandleFunc("GET /datasets", s.handleListDatasets)
-	mux.HandleFunc("GET /history", s.handleHistory)
-	return mux
+	app := http.NewServeMux()
+	app.HandleFunc("POST /query", s.handleQuery)
+	app.HandleFunc("POST /explain", s.handleExplain)
+	app.HandleFunc("POST /datasets", s.handleCreateDataset)
+	app.HandleFunc("GET /datasets", s.handleListDatasets)
+	app.HandleFunc("GET /history", s.handleHistory)
+
+	top := http.NewServeMux()
+	top.Handle("/", authMiddleware(s.authSecret)(app))
+	top.Handle("GET /metrics", promhttp.Handler())
+
+	return otelhttp.NewHandler(top, "coordinator")
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
@@ -162,7 +179,12 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	started := time.Now()
 
-	historyID, err := s.history.Start(ctx, "sql", req.SQL, "{}")
+	var workspaceID, userID string
+	if claims, ok := claimsFromContext(ctx); ok {
+		workspaceID, userID = claims.WorkspaceID, claims.UserID
+	}
+
+	historyID, err := s.history.Start(ctx, "sql", req.SQL, "{}", workspaceID, userID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return

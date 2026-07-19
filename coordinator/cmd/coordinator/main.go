@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -23,6 +25,7 @@ import (
 	"atlas/coordinator/internal/cache"
 	catalogpb "atlas/coordinator/internal/catalogpb"
 	"atlas/coordinator/internal/history"
+	"atlas/coordinator/internal/observability"
 	"atlas/coordinator/internal/scheduler"
 )
 
@@ -39,8 +42,22 @@ func run() error {
 	workerAddrs := strings.Split(envOr("WORKER_ADDRS", "127.0.0.1:9100"), ",")
 	redisURL := envOr("REDIS_URL", "redis://127.0.0.1:6379")
 
+	// Unlike every other config value here, JWT_SECRET has no dev fallback:
+	// it gates the entire REST API, so a hardcoded default would let anyone
+	// reading the source mint valid tokens for any workspace.
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		return fmt.Errorf("JWT_SECRET is required — generate one and export it, or set it in deploy/docker-compose.yml for local dev")
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	shutdownTracer, err := observability.InitTracer(ctx, "coordinator")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = shutdownTracer(context.Background()) }()
 
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
@@ -48,7 +65,10 @@ func run() error {
 	}
 	defer pool.Close()
 
-	catalogConn, err := grpc.NewClient(catalogAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	catalogConn, err := grpc.NewClient(catalogAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+	)
 	if err != nil {
 		return err
 	}
@@ -75,7 +95,7 @@ func run() error {
 	}
 	defer resultCache.Close()
 
-	server := api.NewServer(catalogClient, coordinator, historyStore, resultCache)
+	server := api.NewServer(catalogClient, coordinator, historyStore, resultCache, []byte(jwtSecret))
 
 	httpServer := &http.Server{Addr: listenAddr, Handler: server.Routes()}
 	go func() {

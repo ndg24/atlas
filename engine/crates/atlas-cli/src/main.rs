@@ -38,6 +38,11 @@ enum Command {
         sql: String,
         #[arg(long, default_value = DEFAULT_COORDINATOR_ADDR)]
         coordinator_addr: String,
+        /// Bearer token for the coordinator's REST API (every route requires
+        /// one). Mint one with `go run ./coordinator/cmd/tokengen` against
+        /// the coordinator's JWT_SECRET; falls back to $ATLAS_TOKEN.
+        #[arg(long, env = "ATLAS_TOKEN")]
+        token: Option<String>,
     },
     /// Ingest a CSV file into a dataset: write `.atlas` (or Parquet) file(s)
     /// and commit a new snapshot to the catalog.
@@ -87,8 +92,9 @@ async fn main() -> Result<()> {
             dataset: Some(dataset),
             sql,
             coordinator_addr,
+            token,
             ..
-        } => run_query_dataset(&dataset, &sql, &coordinator_addr).await,
+        } => run_query_dataset(&dataset, &sql, &coordinator_addr, token.as_deref()).await,
         Command::Query { .. } => bail!("query requires exactly one of --file or --dataset"),
         Command::Ingest {
             file,
@@ -135,11 +141,20 @@ struct ErrorResponse {
     error: String,
 }
 
-async fn run_query_dataset(dataset: &str, sql: &str, coordinator_addr: &str) -> Result<()> {
+async fn run_query_dataset(
+    dataset: &str,
+    sql: &str,
+    coordinator_addr: &str,
+    token: Option<&str>,
+) -> Result<()> {
     let http = reqwest::Client::new();
-    let resp = http
+    let mut req = http
         .post(format!("{coordinator_addr}/query"))
-        .json(&serde_json::json!({ "dataset": dataset, "sql": sql }))
+        .json(&serde_json::json!({ "dataset": dataset, "sql": sql }));
+    if let Some(token) = token {
+        req = req.bearer_auth(token);
+    }
+    let resp = req
         .send()
         .await
         .with_context(|| format!("calling coordinator at {coordinator_addr}"))?;

@@ -50,8 +50,13 @@ services:
     environment:
       DATABASE_URL: postgres://atlas:atlas@postgres:5432/atlas
       CATALOG_ADDR: ":9091"
+      # 9095, not 9092 — that's reserved for the future AI service's gRPC
+      # port (docs/atlas-implementation-spec.md §1.4).
+      CATALOG_METRICS_ADDR: ":9095"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4317"
     ports:
       - "9091:9091"
+      - "9095:9095"
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,31 +75,40 @@ services:
     build:
       context: ..
       dockerfile: engine/Dockerfile
-    command: ["--addr", "0.0.0.0:9100"]
+    command: ["--addr", "0.0.0.0:9100", "--metrics-addr", "0.0.0.0:9101"]
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4317"
     volumes:
       - ./data:/data
     expose:
       - "9100"
+      - "9101"
 
   worker-2:
     build:
       context: ..
       dockerfile: engine/Dockerfile
-    command: ["--addr", "0.0.0.0:9100"]
+    command: ["--addr", "0.0.0.0:9100", "--metrics-addr", "0.0.0.0:9101"]
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4317"
     volumes:
       - ./data:/data
     expose:
       - "9100"
+      - "9101"
 
   worker-3:
     build:
       context: ..
       dockerfile: engine/Dockerfile
-    command: ["--addr", "0.0.0.0:9100"]
+    command: ["--addr", "0.0.0.0:9100", "--metrics-addr", "0.0.0.0:9101"]
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4317"
     volumes:
       - ./data:/data
     expose:
       - "9100"
+      - "9101"
 
   coordinator:
     build:
@@ -107,6 +121,12 @@ services:
       COORDINATOR_ADDR: ":8080"
       WORKER_ADDRS: "worker-1:9100,worker-2:9100,worker-3:9100"
       REDIS_URL: "redis://redis:6379"
+      # Dev-only: a hardcoded shared secret is fine for local compose, but
+      # this is exactly the one env var in this stack with no code-level
+      # fallback (see coordinator/cmd/coordinator/main.go) — a production
+      # deployment must override it.
+      JWT_SECRET: "dev-insecure-secret-change-me"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4317"
     ports:
       - "8080:8080"
     depends_on:
@@ -115,6 +135,27 @@ services:
       - worker-2
       - worker-3
       - redis
+
+  # Trace visualization for the OTel spans coordinator/catalog/workers emit
+  # once OTEL_EXPORTER_OTLP_ENDPOINT is set (it is, above, pointed at this
+  # service) — a query's trace id can be searched for here to see the
+  # REST -> catalog -> worker span tree in one place.
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686" # UI
+      - "4317:4317" # OTLP gRPC
+
+  # Scrapes the /metrics endpoints coordinator, catalog, and each worker
+  # expose (see prometheus.yml).
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
 
 volumes:
   postgres-data:

@@ -14,10 +14,23 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/redis/go-redis/v9"
 )
 
 const keyPrefix = "atlas:query:"
+
+var (
+	cacheHits = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "atlas_cache_hits_total",
+		Help: "Count of result-cache lookups that hit a fresh entry.",
+	})
+	cacheMisses = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "atlas_cache_misses_total",
+		Help: "Count of result-cache lookups that missed (absent, or stale snapshot).",
+	})
+)
 
 // Entry is a cached query result: the Arrow IPC batches it produced, tagged
 // with the dataset snapshot they were computed against.
@@ -73,6 +86,7 @@ func Key(optimizedPlanJSON, snapshotID string) string {
 func (c *ResultCache) Get(ctx context.Context, key, currentSnapshotID string) (*Entry, bool, error) {
 	raw, err := c.rdb.Get(ctx, key).Bytes()
 	if err == redis.Nil {
+		cacheMisses.Inc()
 		return nil, false, nil
 	}
 	if err != nil {
@@ -83,8 +97,10 @@ func (c *ResultCache) Get(ctx context.Context, key, currentSnapshotID string) (*
 		return nil, false, fmt.Errorf("decoding cached entry: %w", err)
 	}
 	if entry.SnapshotID != currentSnapshotID {
+		cacheMisses.Inc()
 		return nil, false, nil
 	}
+	cacheHits.Inc()
 	return &entry, true, nil
 }
 
