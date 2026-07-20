@@ -25,6 +25,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
+	aipb "atlas/coordinator/internal/aipb"
 	"atlas/coordinator/internal/cache"
 	catalogpb "atlas/coordinator/internal/catalogpb"
 	"atlas/coordinator/internal/history"
@@ -35,6 +36,7 @@ import (
 type Server struct {
 	catalog     catalogpb.CatalogServiceClient
 	coordinator *scheduler.Coordinator
+	ai          aipb.AIServiceClient
 	history     *history.Store
 	cache       *cache.ResultCache
 	authSecret  []byte
@@ -43,8 +45,8 @@ type Server struct {
 // NewServer wires up the REST API. resultCache may be nil (caching disabled)
 // — every cache access below is guarded accordingly. authSecret signs/
 // validates the bearer tokens every route below requires.
-func NewServer(catalog catalogpb.CatalogServiceClient, coordinator *scheduler.Coordinator, historyStore *history.Store, resultCache *cache.ResultCache, authSecret []byte) *Server {
-	return &Server{catalog: catalog, coordinator: coordinator, history: historyStore, cache: resultCache, authSecret: authSecret}
+func NewServer(catalog catalogpb.CatalogServiceClient, coordinator *scheduler.Coordinator, aiClient aipb.AIServiceClient, historyStore *history.Store, resultCache *cache.ResultCache, authSecret []byte) *Server {
+	return &Server{catalog: catalog, coordinator: coordinator, ai: aiClient, history: historyStore, cache: resultCache, authSecret: authSecret}
 }
 
 // Routes returns the full REST API. The application routes are gated by
@@ -57,6 +59,7 @@ func NewServer(catalog catalogpb.CatalogServiceClient, coordinator *scheduler.Co
 func (s *Server) Routes() http.Handler {
 	app := http.NewServeMux()
 	app.HandleFunc("POST /query", s.handleQuery)
+	app.HandleFunc("POST /query/nl", s.handleQueryNL)
 	app.HandleFunc("POST /explain", s.handleExplain)
 	app.HandleFunc("POST /datasets", s.handleCreateDataset)
 	app.HandleFunc("GET /datasets", s.handleListDatasets)
@@ -253,6 +256,151 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		DurationMs:      int64(durationMs),
 		ArrowIPCBatches: encodeBatches(result.ArrowIPCBatches),
 		CacheHit:        false,
+	})
+}
+
+type nlQueryRequest struct {
+	Dataset  string `json:"dataset"`
+	Question string `json:"question"`
+	// Narrate optionally asks the AI service to turn the result into a
+	// plain-English explanation (AIService.Explain) — off by default since
+	// it's an extra LLM call most callers (e.g. golden-test harnesses
+	// checking result correctness) don't need.
+	Narrate bool `json:"narrate"`
+}
+
+type nlQueryResponse struct {
+	QueryID         string   `json:"query_id"`
+	DurationMs      int64    `json:"duration_ms"`
+	ArrowIPCBatches []string `json:"arrow_ipc_batches"`
+	CacheHit        bool     `json:"cache_hit"`
+	RawLLMOutput    string   `json:"raw_llm_output"`
+	// Explanation is only populated when Narrate was requested and the
+	// result was a single combined batch (see handleQueryNL) — narrating a
+	// multi-batch, uncombined scan result isn't supported yet.
+	Explanation string `json:"explanation,omitempty"`
+}
+
+// handleQueryNL is /query's Phase 6 sibling: it swaps SQL text for an
+// AIService.NLToQuery call to get a LogicalPlan, then rejoins /query's exact
+// path (CompileFromPlan instead of Compile, then the same SetPlan/cache/
+// prune/RunCompiled/Finish sequence) — the point being that nothing past
+// plan-acquisition differs between the SQL and NL paths.
+func (s *Server) handleQueryNL(w http.ResponseWriter, r *http.Request) {
+	var req nlQueryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("decoding request body: %w", err))
+		return
+	}
+	if req.Dataset == "" || req.Question == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf(`both "dataset" and "question" are required`))
+		return
+	}
+
+	ctx := r.Context()
+	started := time.Now()
+
+	var workspaceID, userID string
+	if claims, ok := claimsFromContext(ctx); ok {
+		workspaceID, userID = claims.WorkspaceID, claims.UserID
+	}
+
+	historyID, err := s.history.Start(ctx, "nl", req.Question, "{}", workspaceID, userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	fail := func(err error) {
+		_ = s.history.Finish(ctx, historyID, "failed", int(time.Since(started).Milliseconds()), err.Error())
+		writeError(w, http.StatusInternalServerError, err)
+	}
+
+	dq, err := s.lookupDataset(ctx, req.Dataset)
+	if err != nil {
+		fail(err)
+		return
+	}
+
+	nlResp, err := s.ai.NLToQuery(ctx, &aipb.NLRequest{
+		Question:   req.Question,
+		Dataset:    req.Dataset,
+		SchemaJson: dq.dataset.GetSchemaJson(),
+	})
+	if err != nil {
+		fail(fmt.Errorf("translating question to a query: %w", err))
+		return
+	}
+	if nlResp.GetError() != "" {
+		fail(fmt.Errorf("translating question to a query: %s", nlResp.GetError()))
+		return
+	}
+
+	compiled, err := s.coordinator.CompileFromPlan(ctx, nlResp.GetPlanJson(), dq.dataset.GetSchemaJson())
+	if err != nil {
+		fail(fmt.Errorf("compiling query: %w", err))
+		return
+	}
+	physicalPlanJSON, _ := json.Marshal(map[string]string{
+		"partial": compiled.GetPartialPlanJson(), "combine": compiled.GetCombinePlanJson(),
+	})
+	if err := s.history.SetPlan(ctx, historyID, compiled.GetLogicalPlanJson(), string(physicalPlanJSON)); err != nil {
+		fail(err)
+		return
+	}
+
+	cacheKey := cache.Key(compiled.GetOptimizedPlanJson(), dq.snapshotID)
+	if s.cache != nil {
+		if entry, hit, cacheErr := s.cache.Get(ctx, cacheKey, dq.snapshotID); cacheErr == nil && hit {
+			durationMs := int(time.Since(started).Milliseconds())
+			if err := s.history.Finish(ctx, historyID, "succeeded", durationMs, ""); err != nil {
+				writeError(w, http.StatusInternalServerError, fmt.Errorf("query succeeded (cache hit) but recording history failed: %w", err))
+				return
+			}
+			writeJSON(w, http.StatusOK, nlQueryResponse{
+				QueryID:         historyID,
+				DurationMs:      int64(durationMs),
+				ArrowIPCBatches: encodeBatches(entry.ArrowIPCBatches),
+				CacheHit:        true,
+				RawLLMOutput:    nlResp.GetRawLlmOutput(),
+			})
+			return
+		}
+	}
+
+	prunedManifests := pruneManifests(compiled.GetOptimizedPlanJson(), dq.manifests)
+	result, err := s.coordinator.RunCompiled(ctx, compiled, toSchedulerManifests(prunedManifests))
+	if err != nil {
+		fail(err)
+		return
+	}
+
+	durationMs := int(time.Since(started).Milliseconds())
+	if err := s.history.Finish(ctx, historyID, "succeeded", durationMs, ""); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("query succeeded but recording history failed: %w", err))
+		return
+	}
+
+	if s.cache != nil {
+		_ = s.cache.Set(ctx, cacheKey, dq.snapshotID, result.ArrowIPCBatches)
+	}
+
+	explanation := ""
+	if req.Narrate && len(result.ArrowIPCBatches) == 1 {
+		if explainResp, err := s.ai.Explain(ctx, &aipb.ExplainRequest{
+			Question:       req.Question,
+			ResultArrowIpc: result.ArrowIPCBatches[0],
+		}); err == nil {
+			explanation = explainResp.GetExplanation()
+		}
+	}
+
+	writeJSON(w, http.StatusOK, nlQueryResponse{
+		QueryID:         historyID,
+		DurationMs:      int64(durationMs),
+		ArrowIPCBatches: encodeBatches(result.ArrowIPCBatches),
+		CacheHit:        false,
+		RawLLMOutput:    nlResp.GetRawLlmOutput(),
+		Explanation:     explanation,
 	})
 }
 

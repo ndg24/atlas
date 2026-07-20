@@ -73,6 +73,60 @@ func (x *CompileRequest) GetSchemaJson() string {
 	return ""
 }
 
+type CompileFromPlanRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// JSON-serialized atlas_query::LogicalPlan (serde, not this proto file) —
+	// same encoding CompileResponse's own plan fields already use.
+	PlanJson      string `protobuf:"bytes,1,opt,name=plan_json,json=planJson,proto3" json:"plan_json,omitempty"`
+	SchemaJson    string `protobuf:"bytes,2,opt,name=schema_json,json=schemaJson,proto3" json:"schema_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CompileFromPlanRequest) Reset() {
+	*x = CompileFromPlanRequest{}
+	mi := &file_worker_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CompileFromPlanRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CompileFromPlanRequest) ProtoMessage() {}
+
+func (x *CompileFromPlanRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CompileFromPlanRequest.ProtoReflect.Descriptor instead.
+func (*CompileFromPlanRequest) Descriptor() ([]byte, []int) {
+	return file_worker_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *CompileFromPlanRequest) GetPlanJson() string {
+	if x != nil {
+		return x.PlanJson
+	}
+	return ""
+}
+
+func (x *CompileFromPlanRequest) GetSchemaJson() string {
+	if x != nil {
+		return x.SchemaJson
+	}
+	return ""
+}
+
 type CompileResponse struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	PartialPlanJson string                 `protobuf:"bytes,1,opt,name=partial_plan_json,json=partialPlanJson,proto3" json:"partial_plan_json,omitempty"`
@@ -91,7 +145,7 @@ type CompileResponse struct {
 
 func (x *CompileResponse) Reset() {
 	*x = CompileResponse{}
-	mi := &file_worker_proto_msgTypes[1]
+	mi := &file_worker_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -103,7 +157,7 @@ func (x *CompileResponse) String() string {
 func (*CompileResponse) ProtoMessage() {}
 
 func (x *CompileResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_proto_msgTypes[1]
+	mi := &file_worker_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -116,7 +170,7 @@ func (x *CompileResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompileResponse.ProtoReflect.Descriptor instead.
 func (*CompileResponse) Descriptor() ([]byte, []int) {
-	return file_worker_proto_rawDescGZIP(), []int{1}
+	return file_worker_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *CompileResponse) GetPartialPlanJson() string {
@@ -176,7 +230,7 @@ type TaskRequest struct {
 
 func (x *TaskRequest) Reset() {
 	*x = TaskRequest{}
-	mi := &file_worker_proto_msgTypes[2]
+	mi := &file_worker_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -188,7 +242,7 @@ func (x *TaskRequest) String() string {
 func (*TaskRequest) ProtoMessage() {}
 
 func (x *TaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_proto_msgTypes[2]
+	mi := &file_worker_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -201,7 +255,7 @@ func (x *TaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TaskRequest.ProtoReflect.Descriptor instead.
 func (*TaskRequest) Descriptor() ([]byte, []int) {
-	return file_worker_proto_rawDescGZIP(), []int{2}
+	return file_worker_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *TaskRequest) GetTaskId() string {
@@ -270,7 +324,7 @@ type FileSource struct {
 
 func (x *FileSource) Reset() {
 	*x = FileSource{}
-	mi := &file_worker_proto_msgTypes[3]
+	mi := &file_worker_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -282,7 +336,7 @@ func (x *FileSource) String() string {
 func (*FileSource) ProtoMessage() {}
 
 func (x *FileSource) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_proto_msgTypes[3]
+	mi := &file_worker_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -295,7 +349,7 @@ func (x *FileSource) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileSource.ProtoReflect.Descriptor instead.
 func (*FileSource) Descriptor() ([]byte, []int) {
-	return file_worker_proto_rawDescGZIP(), []int{3}
+	return file_worker_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *FileSource) GetFilePath() string {
@@ -330,7 +384,7 @@ type InlineSource struct {
 
 func (x *InlineSource) Reset() {
 	*x = InlineSource{}
-	mi := &file_worker_proto_msgTypes[4]
+	mi := &file_worker_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -342,7 +396,7 @@ func (x *InlineSource) String() string {
 func (*InlineSource) ProtoMessage() {}
 
 func (x *InlineSource) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_proto_msgTypes[4]
+	mi := &file_worker_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -355,7 +409,7 @@ func (x *InlineSource) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InlineSource.ProtoReflect.Descriptor instead.
 func (*InlineSource) Descriptor() ([]byte, []int) {
-	return file_worker_proto_rawDescGZIP(), []int{4}
+	return file_worker_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *InlineSource) GetArrowIpcBatches() [][]byte {
@@ -374,7 +428,7 @@ type ResultBatch struct {
 
 func (x *ResultBatch) Reset() {
 	*x = ResultBatch{}
-	mi := &file_worker_proto_msgTypes[5]
+	mi := &file_worker_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -386,7 +440,7 @@ func (x *ResultBatch) String() string {
 func (*ResultBatch) ProtoMessage() {}
 
 func (x *ResultBatch) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_proto_msgTypes[5]
+	mi := &file_worker_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -399,7 +453,7 @@ func (x *ResultBatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResultBatch.ProtoReflect.Descriptor instead.
 func (*ResultBatch) Descriptor() ([]byte, []int) {
-	return file_worker_proto_rawDescGZIP(), []int{5}
+	return file_worker_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ResultBatch) GetArrowIpc() []byte {
@@ -417,7 +471,7 @@ type HeartbeatRequest struct {
 
 func (x *HeartbeatRequest) Reset() {
 	*x = HeartbeatRequest{}
-	mi := &file_worker_proto_msgTypes[6]
+	mi := &file_worker_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -429,7 +483,7 @@ func (x *HeartbeatRequest) String() string {
 func (*HeartbeatRequest) ProtoMessage() {}
 
 func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_proto_msgTypes[6]
+	mi := &file_worker_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -442,7 +496,7 @@ func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatRequest.ProtoReflect.Descriptor instead.
 func (*HeartbeatRequest) Descriptor() ([]byte, []int) {
-	return file_worker_proto_rawDescGZIP(), []int{6}
+	return file_worker_proto_rawDescGZIP(), []int{7}
 }
 
 type HeartbeatResponse struct {
@@ -455,7 +509,7 @@ type HeartbeatResponse struct {
 
 func (x *HeartbeatResponse) Reset() {
 	*x = HeartbeatResponse{}
-	mi := &file_worker_proto_msgTypes[7]
+	mi := &file_worker_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -467,7 +521,7 @@ func (x *HeartbeatResponse) String() string {
 func (*HeartbeatResponse) ProtoMessage() {}
 
 func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_worker_proto_msgTypes[7]
+	mi := &file_worker_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -480,7 +534,7 @@ func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatResponse.ProtoReflect.Descriptor instead.
 func (*HeartbeatResponse) Descriptor() ([]byte, []int) {
-	return file_worker_proto_rawDescGZIP(), []int{7}
+	return file_worker_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *HeartbeatResponse) GetAlive() bool {
@@ -504,6 +558,10 @@ const file_worker_proto_rawDesc = "" +
 	"\fworker.proto\x12\fatlas.worker\"C\n" +
 	"\x0eCompileRequest\x12\x10\n" +
 	"\x03sql\x18\x01 \x01(\tR\x03sql\x12\x1f\n" +
+	"\vschema_json\x18\x02 \x01(\tR\n" +
+	"schemaJson\"V\n" +
+	"\x16CompileFromPlanRequest\x12\x1b\n" +
+	"\tplan_json\x18\x01 \x01(\tR\bplanJson\x12\x1f\n" +
 	"\vschema_json\x18\x02 \x01(\tR\n" +
 	"schemaJson\"\x80\x02\n" +
 	"\x0fCompileResponse\x12*\n" +
@@ -531,9 +589,10 @@ const file_worker_proto_rawDesc = "" +
 	"\x10HeartbeatRequest\"Q\n" +
 	"\x11HeartbeatResponse\x12\x14\n" +
 	"\x05alive\x18\x01 \x01(\bR\x05alive\x12&\n" +
-	"\x0fin_flight_tasks\x18\x02 \x01(\x05R\rinFlightTasks2\xec\x01\n" +
+	"\x0fin_flight_tasks\x18\x02 \x01(\x05R\rinFlightTasks2\xc4\x02\n" +
 	"\rWorkerService\x12F\n" +
-	"\aCompile\x12\x1c.atlas.worker.CompileRequest\x1a\x1d.atlas.worker.CompileResponse\x12E\n" +
+	"\aCompile\x12\x1c.atlas.worker.CompileRequest\x1a\x1d.atlas.worker.CompileResponse\x12V\n" +
+	"\x0fCompileFromPlan\x12$.atlas.worker.CompileFromPlanRequest\x1a\x1d.atlas.worker.CompileResponse\x12E\n" +
 	"\vExecuteTask\x12\x19.atlas.worker.TaskRequest\x1a\x19.atlas.worker.ResultBatch0\x01\x12L\n" +
 	"\tHeartbeat\x12\x1e.atlas.worker.HeartbeatRequest\x1a\x1f.atlas.worker.HeartbeatResponseB.Z,atlas/coordinator/internal/workerpb;workerpbb\x06proto3"
 
@@ -549,28 +608,31 @@ func file_worker_proto_rawDescGZIP() []byte {
 	return file_worker_proto_rawDescData
 }
 
-var file_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_worker_proto_goTypes = []any{
-	(*CompileRequest)(nil),    // 0: atlas.worker.CompileRequest
-	(*CompileResponse)(nil),   // 1: atlas.worker.CompileResponse
-	(*TaskRequest)(nil),       // 2: atlas.worker.TaskRequest
-	(*FileSource)(nil),        // 3: atlas.worker.FileSource
-	(*InlineSource)(nil),      // 4: atlas.worker.InlineSource
-	(*ResultBatch)(nil),       // 5: atlas.worker.ResultBatch
-	(*HeartbeatRequest)(nil),  // 6: atlas.worker.HeartbeatRequest
-	(*HeartbeatResponse)(nil), // 7: atlas.worker.HeartbeatResponse
+	(*CompileRequest)(nil),         // 0: atlas.worker.CompileRequest
+	(*CompileFromPlanRequest)(nil), // 1: atlas.worker.CompileFromPlanRequest
+	(*CompileResponse)(nil),        // 2: atlas.worker.CompileResponse
+	(*TaskRequest)(nil),            // 3: atlas.worker.TaskRequest
+	(*FileSource)(nil),             // 4: atlas.worker.FileSource
+	(*InlineSource)(nil),           // 5: atlas.worker.InlineSource
+	(*ResultBatch)(nil),            // 6: atlas.worker.ResultBatch
+	(*HeartbeatRequest)(nil),       // 7: atlas.worker.HeartbeatRequest
+	(*HeartbeatResponse)(nil),      // 8: atlas.worker.HeartbeatResponse
 }
 var file_worker_proto_depIdxs = []int32{
-	3, // 0: atlas.worker.TaskRequest.file:type_name -> atlas.worker.FileSource
-	4, // 1: atlas.worker.TaskRequest.inline:type_name -> atlas.worker.InlineSource
+	4, // 0: atlas.worker.TaskRequest.file:type_name -> atlas.worker.FileSource
+	5, // 1: atlas.worker.TaskRequest.inline:type_name -> atlas.worker.InlineSource
 	0, // 2: atlas.worker.WorkerService.Compile:input_type -> atlas.worker.CompileRequest
-	2, // 3: atlas.worker.WorkerService.ExecuteTask:input_type -> atlas.worker.TaskRequest
-	6, // 4: atlas.worker.WorkerService.Heartbeat:input_type -> atlas.worker.HeartbeatRequest
-	1, // 5: atlas.worker.WorkerService.Compile:output_type -> atlas.worker.CompileResponse
-	5, // 6: atlas.worker.WorkerService.ExecuteTask:output_type -> atlas.worker.ResultBatch
-	7, // 7: atlas.worker.WorkerService.Heartbeat:output_type -> atlas.worker.HeartbeatResponse
-	5, // [5:8] is the sub-list for method output_type
-	2, // [2:5] is the sub-list for method input_type
+	1, // 3: atlas.worker.WorkerService.CompileFromPlan:input_type -> atlas.worker.CompileFromPlanRequest
+	3, // 4: atlas.worker.WorkerService.ExecuteTask:input_type -> atlas.worker.TaskRequest
+	7, // 5: atlas.worker.WorkerService.Heartbeat:input_type -> atlas.worker.HeartbeatRequest
+	2, // 6: atlas.worker.WorkerService.Compile:output_type -> atlas.worker.CompileResponse
+	2, // 7: atlas.worker.WorkerService.CompileFromPlan:output_type -> atlas.worker.CompileResponse
+	6, // 8: atlas.worker.WorkerService.ExecuteTask:output_type -> atlas.worker.ResultBatch
+	8, // 9: atlas.worker.WorkerService.Heartbeat:output_type -> atlas.worker.HeartbeatResponse
+	6, // [6:10] is the sub-list for method output_type
+	2, // [2:6] is the sub-list for method input_type
 	2, // [2:2] is the sub-list for extension type_name
 	2, // [2:2] is the sub-list for extension extendee
 	0, // [0:2] is the sub-list for field type_name
@@ -581,7 +643,7 @@ func file_worker_proto_init() {
 	if File_worker_proto != nil {
 		return
 	}
-	file_worker_proto_msgTypes[2].OneofWrappers = []any{
+	file_worker_proto_msgTypes[3].OneofWrappers = []any{
 		(*TaskRequest_File)(nil),
 		(*TaskRequest_Inline)(nil),
 	}
@@ -591,7 +653,7 @@ func file_worker_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_worker_proto_rawDesc), len(file_worker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

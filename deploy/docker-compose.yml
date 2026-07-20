@@ -120,6 +120,7 @@ services:
       CATALOG_ADDR: "catalog:9091"
       COORDINATOR_ADDR: ":8080"
       WORKER_ADDRS: "worker-1:9100,worker-2:9100,worker-3:9100"
+      AI_SERVICE_ADDR: "ai-service:9092"
       REDIS_URL: "redis://redis:6379"
       # Dev-only: a hardcoded shared secret is fine for local compose, but
       # this is exactly the one env var in this stack with no code-level
@@ -135,6 +136,35 @@ services:
       - worker-2
       - worker-3
       - redis
+      - ai-service
+
+  # Local model runtime for the ai-service's ollama provider (Phase 6 task
+  # 7) — the first-class, no-API-key path (README: "No hosted-LLM API key
+  # required if ATLAS_LLM_PROVIDER=ollama"). `ollama-models` persists pulled
+  # models across restarts; pull one with e.g.
+  # `docker compose exec ollama ollama pull llama3` before pointing
+  # ATLAS_LLM_MODEL at it.
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+
+  ai-service:
+    build:
+      context: ..
+      dockerfile: ai-service/Dockerfile
+    environment:
+      ATLAS_LLM_PROVIDER: "ollama"
+      ATLAS_LLM_MODEL: "llama3"
+      OLLAMA_API_BASE: "http://ollama:11434"
+      AI_SERVICE_ADDR: "0.0.0.0:9092"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4317"
+    ports:
+      - "9092:9092"
+    depends_on:
+      - ollama
 
   # Trace visualization for the OTel spans coordinator/catalog/workers emit
   # once OTEL_EXPORTER_OTLP_ENDPOINT is set (it is, above, pointed at this
@@ -160,3 +190,4 @@ services:
 volumes:
   postgres-data:
   minio-data:
+  ollama-models:

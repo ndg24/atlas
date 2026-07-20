@@ -1,0 +1,48 @@
+syntax = "proto3";
+package atlas.ai;
+
+option go_package = "atlas/coordinator/internal/aipb;aipb";
+
+// The AI service (Python, docs/atlas-implementation-spec.md Phase 6) turns a
+// natural-language question into the same LogicalPlan shape SQL compiles to.
+// NLResponse carries that plan as `plan_json` — a JSON string matching
+// atlas_query::plan::LogicalPlan's serde external-tagging (see
+// proto/plan.proto's header) — not an embedded LogicalPlan message, so the
+// coordinator can hand it straight to WorkerService.CompileFromPlan
+// (proto/worker.proto) exactly like it already threads
+// Compile's *_plan_json fields through unopened. The coordinator fetches
+// schema_json itself (CatalogService.GetDataset) and passes it in, the same
+// way it already does for the SQL path's CompileRequest — the AI service
+// never needs its own catalog client.
+//
+// Explain narrates an already-executed result (Arrow IPC bytes) in plain
+// English — the LLM never sees raw source data, only a result set the
+// engine already produced.
+
+service AIService {
+  rpc NLToQuery(NLRequest) returns (NLResponse);
+  rpc Explain(ExplainRequest) returns (ExplainResponse);
+}
+
+message NLRequest {
+  string question = 1;
+  string dataset = 2;
+  string schema_json = 3;
+}
+
+message NLResponse {
+  string plan_json = 1;
+  string raw_llm_output = 2;
+  // Set (with plan_json empty) if nl_to_plan failed validation twice —
+  // mirrors CompileResponse.error's "empty fields + error string" shape.
+  string error = 3;
+}
+
+message ExplainRequest {
+  string question = 1;
+  bytes result_arrow_ipc = 2;
+}
+
+message ExplainResponse {
+  string explanation = 1;
+}

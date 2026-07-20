@@ -28,12 +28,26 @@ option go_package = "atlas/coordinator/internal/workerpb;workerpb";
 
 service WorkerService {
   rpc Compile(CompileRequest) returns (CompileResponse);
+  // Phase 6: same as Compile, but the caller already has a LogicalPlan (e.g.
+  // the AI service's NLToQuery output, proto/ai.proto's NLResponse.plan_json)
+  // instead of SQL text. Skips parse_sql/build_logical_plan and runs the same
+  // optimize+split logic Compile uses, returning the identical CompileResponse
+  // shape — so everything downstream (RunCompiled, caching, pruning) is
+  // unchanged regardless of whether the plan started as SQL or NL.
+  rpc CompileFromPlan(CompileFromPlanRequest) returns (CompileResponse);
   rpc ExecuteTask(TaskRequest) returns (stream ResultBatch);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
 }
 
 message CompileRequest {
   string sql = 1;
+  string schema_json = 2;
+}
+
+message CompileFromPlanRequest {
+  // JSON-serialized atlas_query::LogicalPlan (serde, not this proto file) —
+  // same encoding CompileResponse's own plan fields already use.
+  string plan_json = 1;
   string schema_json = 2;
 }
 

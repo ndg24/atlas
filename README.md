@@ -69,13 +69,13 @@ coordinator/         # Go: REST API, scheduler, worker registry, result cache
     catalog/
     scheduler/
     api/
-ai-service/          # Python: LLM abstraction, NL→plan, insights, research agents
+ai-service/          # Python: LLM abstraction, NL→plan (Phase 6); insights/agents/retrieval land in Phase 7-8
   atlas_ai/
-    providers/
-    planner/
-    insights/
-    agents/
-    retrieval/
+    providers/       # ModelProvider Protocol + litellm-backed adapter
+    plan/            # schema.py (LogicalPlan mirror + validation), prompt.py, planner.py (nl_to_plan)
+    pb/              # generated from proto/ai.proto (grpcio-tools)
+    explain.py        # narrates an already-executed result (Arrow IPC) in plain English
+    server.py         # grpc.aio AIService server, port 9092
 proto/               # shared .proto contracts: plan, format, catalog, worker, ai
 dashboard/           # Next.js frontend: query console, plan viewer, insights, research reports
 sdk/
@@ -145,10 +145,12 @@ curl -X POST localhost:8080/explain -H "Authorization: Bearer $ATLAS_TOKEN" -d '
 # Prometheus metrics (unauthenticated -- scrapers don't carry a bearer token)
 curl localhost:8080/metrics
 
-# --- everything below is not implemented yet (Phases 6-8) ---
+# query by natural language -- the AI service (Phase 6) compiles the
+# question to the same LogicalPlan SQL produces, then runs through the
+# unchanged optimize -> schedule -> execute path; same bearer token as /query
+curl -X POST localhost:8080/query/nl -H "Authorization: Bearer $ATLAS_TOKEN" -d '{"dataset": "patients", "question": "which diagnosis is most common?"}'
 
-# query by natural language -- compiles to the same LogicalPlan as SQL
-curl -X POST localhost:8080/query/nl -d '{"dataset": "patients", "question": "which diagnosis is most common?"}'
+# --- everything below is not implemented yet (Phases 7-8) ---
 
 # statistically-grounded summary + LLM-narrated insights
 curl -X POST localhost:8080/datasets/patients/summary

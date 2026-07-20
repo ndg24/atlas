@@ -166,7 +166,7 @@ func newTestServer(t *testing.T, catalog *fakeCatalog, workerAddr string) (*api.
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	resultCache := cache.NewWithClient(rdb, 0)
 
-	return api.NewServer(catalog, coordinator, nil, resultCache, testSecret), resultCache
+	return api.NewServer(catalog, coordinator, nil, nil, resultCache, testSecret), resultCache
 }
 
 func TestHandleExplain_PrunesPartitionsAndReportsCacheMiss(t *testing.T) {

@@ -19,9 +19,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	WorkerService_Compile_FullMethodName     = "/atlas.worker.WorkerService/Compile"
-	WorkerService_ExecuteTask_FullMethodName = "/atlas.worker.WorkerService/ExecuteTask"
-	WorkerService_Heartbeat_FullMethodName   = "/atlas.worker.WorkerService/Heartbeat"
+	WorkerService_Compile_FullMethodName         = "/atlas.worker.WorkerService/Compile"
+	WorkerService_CompileFromPlan_FullMethodName = "/atlas.worker.WorkerService/CompileFromPlan"
+	WorkerService_ExecuteTask_FullMethodName     = "/atlas.worker.WorkerService/ExecuteTask"
+	WorkerService_Heartbeat_FullMethodName       = "/atlas.worker.WorkerService/Heartbeat"
 )
 
 // WorkerServiceClient is the client API for WorkerService service.
@@ -29,6 +30,13 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type WorkerServiceClient interface {
 	Compile(ctx context.Context, in *CompileRequest, opts ...grpc.CallOption) (*CompileResponse, error)
+	// Phase 6: same as Compile, but the caller already has a LogicalPlan (e.g.
+	// the AI service's NLToQuery output, proto/ai.proto's NLResponse.plan_json)
+	// instead of SQL text. Skips parse_sql/build_logical_plan and runs the same
+	// optimize+split logic Compile uses, returning the identical CompileResponse
+	// shape — so everything downstream (RunCompiled, caching, pruning) is
+	// unchanged regardless of whether the plan started as SQL or NL.
+	CompileFromPlan(ctx context.Context, in *CompileFromPlanRequest, opts ...grpc.CallOption) (*CompileResponse, error)
 	ExecuteTask(ctx context.Context, in *TaskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ResultBatch], error)
 	Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error)
 }
@@ -45,6 +53,16 @@ func (c *workerServiceClient) Compile(ctx context.Context, in *CompileRequest, o
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CompileResponse)
 	err := c.cc.Invoke(ctx, WorkerService_Compile_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *workerServiceClient) CompileFromPlan(ctx context.Context, in *CompileFromPlanRequest, opts ...grpc.CallOption) (*CompileResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CompileResponse)
+	err := c.cc.Invoke(ctx, WorkerService_CompileFromPlan_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -85,6 +103,13 @@ func (c *workerServiceClient) Heartbeat(ctx context.Context, in *HeartbeatReques
 // for forward compatibility.
 type WorkerServiceServer interface {
 	Compile(context.Context, *CompileRequest) (*CompileResponse, error)
+	// Phase 6: same as Compile, but the caller already has a LogicalPlan (e.g.
+	// the AI service's NLToQuery output, proto/ai.proto's NLResponse.plan_json)
+	// instead of SQL text. Skips parse_sql/build_logical_plan and runs the same
+	// optimize+split logic Compile uses, returning the identical CompileResponse
+	// shape — so everything downstream (RunCompiled, caching, pruning) is
+	// unchanged regardless of whether the plan started as SQL or NL.
+	CompileFromPlan(context.Context, *CompileFromPlanRequest) (*CompileResponse, error)
 	ExecuteTask(*TaskRequest, grpc.ServerStreamingServer[ResultBatch]) error
 	Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error)
 	mustEmbedUnimplementedWorkerServiceServer()
@@ -99,6 +124,9 @@ type UnimplementedWorkerServiceServer struct{}
 
 func (UnimplementedWorkerServiceServer) Compile(context.Context, *CompileRequest) (*CompileResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Compile not implemented")
+}
+func (UnimplementedWorkerServiceServer) CompileFromPlan(context.Context, *CompileFromPlanRequest) (*CompileResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CompileFromPlan not implemented")
 }
 func (UnimplementedWorkerServiceServer) ExecuteTask(*TaskRequest, grpc.ServerStreamingServer[ResultBatch]) error {
 	return status.Error(codes.Unimplemented, "method ExecuteTask not implemented")
@@ -145,6 +173,24 @@ func _WorkerService_Compile_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _WorkerService_CompileFromPlan_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CompileFromPlanRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServiceServer).CompileFromPlan(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkerService_CompileFromPlan_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServiceServer).CompileFromPlan(ctx, req.(*CompileFromPlanRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _WorkerService_ExecuteTask_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(TaskRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -184,6 +230,10 @@ var WorkerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Compile",
 			Handler:    _WorkerService_Compile_Handler,
+		},
+		{
+			MethodName: "CompileFromPlan",
+			Handler:    _WorkerService_CompileFromPlan_Handler,
 		},
 		{
 			MethodName: "Heartbeat",

@@ -1,0 +1,34 @@
+name: ci-python
+
+on:
+  pull_request:
+    paths:
+      - "ai-service/**"
+      - "proto/ai.proto"
+      - ".github/workflows/ci-python.yml"
+  push:
+    branches: [main]
+    paths:
+      - "ai-service/**"
+      - "proto/ai.proto"
+      - ".github/workflows/ci-python.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install
+        run: uv sync
+      # Mocked-provider golden tests only — no API keys or a local Ollama
+      # instance in CI, per docs/atlas-implementation-spec.md Phase 6 task 6.
+      # The real-provider pass (ATLAS_AI_INTEGRATION=1) is not run here.
+      - name: test
+        run: uv run pytest

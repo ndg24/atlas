@@ -83,6 +83,43 @@ func (c *Coordinator) Compile(ctx context.Context, sql, schemaJSON string) (*pb.
 	return nil, fmt.Errorf("compiling query: failed after %d attempts: %w", maxAttempts, lastErr)
 }
 
+// CompileFromPlan is Compile's Phase 6 counterpart: the caller already has a
+// LogicalPlan (JSON, e.g. the AI service's NL output) instead of SQL text, so
+// this skips straight to the worker's optimize+split step. Same retry
+// semantics as Compile — retries on a different live worker if the RPC
+// itself fails, not if the worker reports a compile error (a bad plan fails
+// identically on every worker).
+func (c *Coordinator) CompileFromPlan(ctx context.Context, planJSON, schemaJSON string) (*pb.CompileResponse, error) {
+	const maxAttempts = 3
+	tried := map[string]bool{}
+	var lastErr error
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		addr, ok := c.Registry.PickAndReserve(tried)
+		if !ok {
+			if lastErr != nil {
+				return nil, fmt.Errorf("no more live workers to retry compiling on: %w", lastErr)
+			}
+			return nil, fmt.Errorf("no live workers available to compile query")
+		}
+		tried[addr] = true
+
+		client, _ := c.Registry.client(addr)
+		resp, err := client.CompileFromPlan(ctx, &pb.CompileFromPlanRequest{PlanJson: planJSON, SchemaJson: schemaJSON})
+		c.Registry.Release(addr)
+		if err != nil {
+			lastErr = fmt.Errorf("worker %s: %w", addr, err)
+			c.Registry.MarkDead(addr)
+			continue
+		}
+		if resp.GetError() != "" {
+			return nil, fmt.Errorf("compiling plan: %s", resp.GetError())
+		}
+		return resp, nil
+	}
+	return nil, fmt.Errorf("compiling plan: failed after %d attempts: %w", maxAttempts, lastErr)
+}
+
 // RunCompiled dispatches one partial task per manifest, then — if the
 // compiled query needs it — folds every partial result together with a
 // single combine task. Manifests must all belong to the same dataset

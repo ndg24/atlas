@@ -3,10 +3,15 @@ package atlas.plan;
 
 // Every query — whether it arrives as SQL or natural language — is converted
 // into this shape before touching the optimizer. See
-// docs/atlas-implementation-spec.md §1.1 for rationale. Not yet compiled;
-// Phase 1 consumes a hand-written Rust equivalent in engine/crates/atlas-query.
-// Wire up prost/grpcio-tools codegen from this file once a second language
-// (Go in Phase 2, Python in Phase 6) needs to produce or consume LogicalPlan.
+// docs/atlas-implementation-spec.md §1.1 for rationale. Deliberately never
+// compiled: every consumer (Rust in engine/crates/atlas-query/src/plan.rs,
+// Python in ai-service/atlas_ai/plan/schema.py as of Phase 6) hand-writes its
+// own mirror of this shape instead, because the plan itself only ever
+// crosses process boundaries as a JSON string (serde on the Rust side) —
+// see proto/worker.proto's CompileResponse/CompileFromPlanRequest and
+// proto/ai.proto's NLResponse, which all carry `*_plan_json` string fields
+// rather than an embedded LogicalPlan message. This file stays the one
+// canonical *spec* of the shape every mirror must match.
 
 message LogicalPlan {
   oneof node {

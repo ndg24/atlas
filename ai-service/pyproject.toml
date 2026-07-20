@@ -1,0 +1,27 @@
+[project]
+name = "atlas-ai"
+version = "0.1.0"
+description = "Atlas AI service: NL-to-plan translation and result narration (docs/atlas-implementation-spec.md Phase 6)"
+requires-python = ">=3.11"
+dependencies = [
+    "litellm>=1.51",
+    "grpcio>=1.66",
+    "protobuf>=5.28",
+    "pyarrow>=17.0",
+]
+
+[dependency-groups]
+dev = [
+    "grpcio-tools>=1.66",
+    "pytest>=8.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["atlas_ai"]

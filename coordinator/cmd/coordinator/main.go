@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"atlas/coordinator/internal/api"
+	aipb "atlas/coordinator/internal/aipb"
 	"atlas/coordinator/internal/cache"
 	catalogpb "atlas/coordinator/internal/catalogpb"
 	"atlas/coordinator/internal/history"
@@ -38,6 +39,7 @@ func main() {
 func run() error {
 	databaseURL := envOr("DATABASE_URL", "postgres://atlas:atlas@localhost:5432/atlas")
 	catalogAddr := envOr("CATALOG_ADDR", "127.0.0.1:9091")
+	aiServiceAddr := envOr("AI_SERVICE_ADDR", "127.0.0.1:9092")
 	listenAddr := envOr("COORDINATOR_ADDR", ":8080")
 	workerAddrs := strings.Split(envOr("WORKER_ADDRS", "127.0.0.1:9100"), ",")
 	redisURL := envOr("REDIS_URL", "redis://127.0.0.1:6379")
@@ -75,6 +77,19 @@ func run() error {
 	defer catalogConn.Close()
 	catalogClient := catalogpb.NewCatalogServiceClient(catalogConn)
 
+	// Same construction as the catalog client — otelgrpc's stats handler is
+	// what propagates the coordinator's trace id into the AI service's
+	// spans, no extra code needed beyond this dial option.
+	aiConn, err := grpc.NewClient(aiServiceAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+	)
+	if err != nil {
+		return err
+	}
+	defer aiConn.Close()
+	aiClient := aipb.NewAIServiceClient(aiConn)
+
 	registry, err := scheduler.NewRegistry(workerAddrs)
 	if err != nil {
 		return err
@@ -95,7 +110,7 @@ func run() error {
 	}
 	defer resultCache.Close()
 
-	server := api.NewServer(catalogClient, coordinator, historyStore, resultCache, []byte(jwtSecret))
+	server := api.NewServer(catalogClient, coordinator, aiClient, historyStore, resultCache, []byte(jwtSecret))
 
 	httpServer := &http.Server{Addr: listenAddr, Handler: server.Routes()}
 	go func() {

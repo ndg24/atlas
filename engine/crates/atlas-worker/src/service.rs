@@ -1,5 +1,8 @@
 //! `WorkerService` implementation: `Compile` parses SQL into the
-//! partial/combine plan pair (`crate::split`), `ExecuteTask` runs one plan
+//! partial/combine plan pair (`crate::split`); `CompileFromPlan` (Phase 6)
+//! does the same optimize+split for a caller-supplied `LogicalPlan` JSON
+//! (e.g. the AI service's NL output) instead of SQL text, sharing all of
+//! `Compile`'s logic past the parse step. `ExecuteTask` runs one plan
 //! (JSON-serialized `atlas_query::LogicalPlan`) against either a file
 //! partition or an inline set of already-computed Arrow IPC batches — the
 //! combine step handed back to whichever worker runs it — and `Heartbeat`
@@ -26,8 +29,8 @@ use crate::split::split_for_distribution;
 use crate::telemetry::span_from_metadata;
 use crate::worker_pb::worker_service_server::WorkerService;
 use crate::worker_pb::{
-    task_request::Source, CompileRequest, CompileResponse, HeartbeatRequest, HeartbeatResponse,
-    ResultBatch, TaskRequest,
+    task_request::Source, CompileFromPlanRequest, CompileRequest, CompileResponse,
+    HeartbeatRequest, HeartbeatResponse, ResultBatch, TaskRequest,
 };
 
 #[derive(Default)]
@@ -42,11 +45,22 @@ struct CompiledQuery {
     combine_plan_json: Option<String>,
 }
 
-fn compile_query(sql: &str, schema_json: &str) -> Result<CompiledQuery> {
+// Parses SQL into a LogicalPlan against the dataset's schema — the
+// SQL-specific half of compiling a query. Shared with `parse_and_compile`
+// below; `compile_plan_from_json` skips straight to `compile_plan` instead,
+// since its caller (Phase 6's CompileFromPlan) already has a LogicalPlan.
+fn parse_sql_to_plan(sql: &str, schema_json: &str) -> Result<atlas_query::LogicalPlan> {
     let schema: atlas_format::Schema =
         serde_json::from_str(schema_json).context("parsing dataset schema_json")?;
     let stmt = atlas_query::parse_sql(sql)?;
-    let raw_plan = atlas_query::build_logical_plan(&stmt, &schema)?;
+    atlas_query::build_logical_plan(&stmt, &schema)
+}
+
+// The SQL-agnostic half: optimize + split into partial/combine + serialize
+// all four plan JSONs. Identical logic for a plan that started as SQL or as
+// an AI-service-produced LogicalPlan — this is the one place either path
+// touches atlas_optimizer/split_for_distribution.
+fn compile_plan(raw_plan: atlas_query::LogicalPlan) -> Result<CompiledQuery> {
     let optimized_plan = atlas_optimizer::optimize(raw_plan.clone());
     let split = split_for_distribution(optimized_plan.clone());
 
@@ -68,6 +82,21 @@ fn compile_query(sql: &str, schema_json: &str) -> Result<CompiledQuery> {
         partial_plan_json,
         combine_plan_json,
     })
+}
+
+fn compile_query(sql: &str, schema_json: &str) -> Result<CompiledQuery> {
+    let raw_plan = parse_sql_to_plan(sql, schema_json)?;
+    compile_plan(raw_plan)
+}
+
+// Phase 6: the AI service already produced a LogicalPlan (JSON, serde shape
+// — see proto/plan.proto's header) instead of SQL text. schema_json isn't
+// needed to build the plan here (it already exists), but is accepted for
+// symmetry with compile_query and in case future validation wants it.
+fn compile_query_from_plan(plan_json: &str, _schema_json: &str) -> Result<CompiledQuery> {
+    let raw_plan: atlas_query::LogicalPlan =
+        serde_json::from_str(plan_json).context("parsing plan_json")?;
+    compile_plan(raw_plan)
 }
 
 fn run_task(req: TaskRequest) -> Result<Vec<RecordBatch>> {
@@ -128,6 +157,37 @@ impl WorkerService for WorkerServiceImpl {
         async move {
             let req = request.into_inner();
             let response = match compile_query(&req.sql, &req.schema_json) {
+                Ok(compiled) => CompileResponse {
+                    needs_combine: compiled.combine_plan_json.is_some(),
+                    partial_plan_json: compiled.partial_plan_json,
+                    combine_plan_json: compiled.combine_plan_json.unwrap_or_default(),
+                    logical_plan_json: compiled.logical_plan_json,
+                    optimized_plan_json: compiled.optimized_plan_json,
+                    error: String::new(),
+                },
+                Err(err) => CompileResponse {
+                    partial_plan_json: String::new(),
+                    combine_plan_json: String::new(),
+                    logical_plan_json: String::new(),
+                    optimized_plan_json: String::new(),
+                    needs_combine: false,
+                    error: format!("{err:#}"),
+                },
+            };
+            Ok(Response::new(response))
+        }
+        .instrument(span)
+        .await
+    }
+
+    async fn compile_from_plan(
+        &self,
+        request: Request<CompileFromPlanRequest>,
+    ) -> Result<Response<CompileResponse>, Status> {
+        let span = span_from_metadata(request.metadata(), "CompileFromPlan");
+        async move {
+            let req = request.into_inner();
+            let response = match compile_query_from_plan(&req.plan_json, &req.schema_json) {
                 Ok(compiled) => CompileResponse {
                     needs_combine: compiled.combine_plan_json.is_some(),
                     partial_plan_json: compiled.partial_plan_json,
@@ -301,5 +361,29 @@ mod tests {
         );
         assert!(!scan.columns.contains(&"cost".to_string()));
         assert!(!scan.columns.contains(&"hospital".to_string()));
+    }
+
+    /// The whole point of `CompileFromPlan`: an NL-produced `LogicalPlan`
+    /// (JSON, unopened by anything upstream) must converge on exactly the
+    /// same optimized/partial/combine output the equivalent SQL produces via
+    /// `compile_query` — proving the NL and SQL paths genuinely share one
+    /// execution path past the parse step, not two parallel ones.
+    #[test]
+    fn compile_from_plan_matches_equivalent_sql() {
+        let schema = schema_json();
+
+        let via_sql = compile_query("SELECT diagnosis FROM t WHERE age > 50", &schema).unwrap();
+
+        let stmt = atlas_query::parse_sql("SELECT diagnosis FROM t WHERE age > 50").unwrap();
+        let parsed_schema: atlas_format::Schema = serde_json::from_str(&schema).unwrap();
+        let raw_plan = atlas_query::build_logical_plan(&stmt, &parsed_schema).unwrap();
+        let plan_json = serde_json::to_string(&raw_plan).unwrap();
+
+        let via_plan = compile_query_from_plan(&plan_json, &schema).unwrap();
+
+        assert_eq!(via_sql.logical_plan_json, via_plan.logical_plan_json);
+        assert_eq!(via_sql.optimized_plan_json, via_plan.optimized_plan_json);
+        assert_eq!(via_sql.partial_plan_json, via_plan.partial_plan_json);
+        assert_eq!(via_sql.combine_plan_json, via_plan.combine_plan_json);
     }
 }
