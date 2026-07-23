@@ -120,6 +120,45 @@ func (c *Coordinator) CompileFromPlan(ctx context.Context, planJSON, schemaJSON 
 	return nil, fmt.Errorf("compiling plan: failed after %d attempts: %w", maxAttempts, lastErr)
 }
 
+// Analyze runs one atlas-insights statistical check (Phase 7's
+// WorkerService.Analyze) on any live worker — the batches it carries (a
+// summary count-batch, a grouped aggregate result, a bounded row sample)
+// were already produced by an ordinary query beforehand, so there's no
+// partition to route to; any live worker can serve it. Same retry semantics
+// as Compile: retries on a different live worker if the RPC itself fails,
+// not if the worker reports an analyze error (which would fail identically
+// on every worker).
+func (c *Coordinator) Analyze(ctx context.Context, req *pb.AnalyzeRequest) (*pb.AnalyzeResponse, error) {
+	const maxAttempts = 3
+	tried := map[string]bool{}
+	var lastErr error
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		addr, ok := c.Registry.PickAndReserve(tried)
+		if !ok {
+			if lastErr != nil {
+				return nil, fmt.Errorf("no more live workers to retry analyze on: %w", lastErr)
+			}
+			return nil, fmt.Errorf("no live workers available to analyze")
+		}
+		tried[addr] = true
+
+		client, _ := c.Registry.client(addr)
+		resp, err := client.Analyze(ctx, req)
+		c.Registry.Release(addr)
+		if err != nil {
+			lastErr = fmt.Errorf("worker %s: %w", addr, err)
+			c.Registry.MarkDead(addr)
+			continue
+		}
+		if resp.GetError() != "" {
+			return nil, fmt.Errorf("analyzing (kind=%s): %s", req.GetKind(), resp.GetError())
+		}
+		return resp, nil
+	}
+	return nil, fmt.Errorf("analyze: failed after %d attempts: %w", maxAttempts, lastErr)
+}
+
 // RunCompiled dispatches one partial task per manifest, then — if the
 // compiled query needs it — folds every partial result together with a
 // single combine task. Manifests must all belong to the same dataset

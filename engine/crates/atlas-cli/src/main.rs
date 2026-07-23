@@ -370,6 +370,7 @@ fn column_stats_by_name(
                 "min": BASE64.encode(&stats.min),
                 "max": BASE64.encode(&stats.max),
                 "null_count": stats.null_count,
+                "distinct_count_estimate": stats.distinct_count_estimate,
             });
             (name, value)
         })

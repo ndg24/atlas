@@ -19,8 +19,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AIService_NLToQuery_FullMethodName = "/atlas.ai.AIService/NLToQuery"
-	AIService_Explain_FullMethodName   = "/atlas.ai.AIService/Explain"
+	AIService_NLToQuery_FullMethodName        = "/atlas.ai.AIService/NLToQuery"
+	AIService_Explain_FullMethodName          = "/atlas.ai.AIService/Explain"
+	AIService_NarrateFindings_FullMethodName  = "/atlas.ai.AIService/NarrateFindings"
+	AIService_SuggestQuestions_FullMethodName = "/atlas.ai.AIService/SuggestQuestions"
 )
 
 // AIServiceClient is the client API for AIService service.
@@ -29,6 +31,17 @@ const (
 type AIServiceClient interface {
 	NLToQuery(ctx context.Context, in *NLRequest, opts ...grpc.CallOption) (*NLResponse, error)
 	Explain(ctx context.Context, in *ExplainRequest, opts ...grpc.CallOption) (*ExplainResponse, error)
+	// Phase 7 (AI Analyst): narrates a dataset's already-computed structured
+	// findings (from atlas-insights, via the coordinator's summary/insights
+	// pipeline) in plain English — same "engine is source of truth" boundary
+	// as Explain: the LLM narrates numbers that already exist, it never
+	// invents them.
+	NarrateFindings(ctx context.Context, in *NarrateFindingsRequest, opts ...grpc.CallOption) (*NarrateFindingsResponse, error)
+	// Generates candidate questions for a dataset and returns only the ones
+	// that actually produce a valid plan when run back through NLToQuery's
+	// underlying nl_to_plan — every returned question is guaranteed
+	// answerable, not just plausible-sounding.
+	SuggestQuestions(ctx context.Context, in *SuggestQuestionsRequest, opts ...grpc.CallOption) (*SuggestQuestionsResponse, error)
 }
 
 type aIServiceClient struct {
@@ -59,12 +72,43 @@ func (c *aIServiceClient) Explain(ctx context.Context, in *ExplainRequest, opts 
 	return out, nil
 }
 
+func (c *aIServiceClient) NarrateFindings(ctx context.Context, in *NarrateFindingsRequest, opts ...grpc.CallOption) (*NarrateFindingsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(NarrateFindingsResponse)
+	err := c.cc.Invoke(ctx, AIService_NarrateFindings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *aIServiceClient) SuggestQuestions(ctx context.Context, in *SuggestQuestionsRequest, opts ...grpc.CallOption) (*SuggestQuestionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SuggestQuestionsResponse)
+	err := c.cc.Invoke(ctx, AIService_SuggestQuestions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AIServiceServer is the server API for AIService service.
 // All implementations must embed UnimplementedAIServiceServer
 // for forward compatibility.
 type AIServiceServer interface {
 	NLToQuery(context.Context, *NLRequest) (*NLResponse, error)
 	Explain(context.Context, *ExplainRequest) (*ExplainResponse, error)
+	// Phase 7 (AI Analyst): narrates a dataset's already-computed structured
+	// findings (from atlas-insights, via the coordinator's summary/insights
+	// pipeline) in plain English — same "engine is source of truth" boundary
+	// as Explain: the LLM narrates numbers that already exist, it never
+	// invents them.
+	NarrateFindings(context.Context, *NarrateFindingsRequest) (*NarrateFindingsResponse, error)
+	// Generates candidate questions for a dataset and returns only the ones
+	// that actually produce a valid plan when run back through NLToQuery's
+	// underlying nl_to_plan — every returned question is guaranteed
+	// answerable, not just plausible-sounding.
+	SuggestQuestions(context.Context, *SuggestQuestionsRequest) (*SuggestQuestionsResponse, error)
 	mustEmbedUnimplementedAIServiceServer()
 }
 
@@ -80,6 +124,12 @@ func (UnimplementedAIServiceServer) NLToQuery(context.Context, *NLRequest) (*NLR
 }
 func (UnimplementedAIServiceServer) Explain(context.Context, *ExplainRequest) (*ExplainResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Explain not implemented")
+}
+func (UnimplementedAIServiceServer) NarrateFindings(context.Context, *NarrateFindingsRequest) (*NarrateFindingsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method NarrateFindings not implemented")
+}
+func (UnimplementedAIServiceServer) SuggestQuestions(context.Context, *SuggestQuestionsRequest) (*SuggestQuestionsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SuggestQuestions not implemented")
 }
 func (UnimplementedAIServiceServer) mustEmbedUnimplementedAIServiceServer() {}
 func (UnimplementedAIServiceServer) testEmbeddedByValue()                   {}
@@ -138,6 +188,42 @@ func _AIService_Explain_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AIService_NarrateFindings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(NarrateFindingsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AIServiceServer).NarrateFindings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AIService_NarrateFindings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AIServiceServer).NarrateFindings(ctx, req.(*NarrateFindingsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AIService_SuggestQuestions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SuggestQuestionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AIServiceServer).SuggestQuestions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AIService_SuggestQuestions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AIServiceServer).SuggestQuestions(ctx, req.(*SuggestQuestionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AIService_ServiceDesc is the grpc.ServiceDesc for AIService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -152,6 +238,14 @@ var AIService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Explain",
 			Handler:    _AIService_Explain_Handler,
+		},
+		{
+			MethodName: "NarrateFindings",
+			Handler:    _AIService_NarrateFindings_Handler,
+		},
+		{
+			MethodName: "SuggestQuestions",
+			Handler:    _AIService_SuggestQuestions_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -551,6 +551,162 @@ func (x *HeartbeatResponse) GetInFlightTasks() int32 {
 	return 0
 }
 
+type AnalyzeRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Self-contained Arrow IPC stream to analyze (a summary count-batch, a
+	// grouped aggregate result, or a bounded row sample — meaning depends on
+	// `kind`).
+	ArrowIpc []byte `protobuf:"bytes,1,opt,name=arrow_ipc,json=arrowIpc,proto3" json:"arrow_ipc,omitempty"`
+	// "summary" | "quality" | "outlier" | "trend"
+	Kind          string `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	GroupByColumn string `protobuf:"bytes,3,opt,name=group_by_column,json=groupByColumn,proto3" json:"group_by_column,omitempty"` // outlier
+	ValueColumn   string `protobuf:"bytes,4,opt,name=value_column,json=valueColumn,proto3" json:"value_column,omitempty"`         // outlier, trend
+	TimeColumn    string `protobuf:"bytes,5,opt,name=time_column,json=timeColumn,proto3" json:"time_column,omitempty"`            // trend
+	// Per-column catalog stats already merged across a dataset's manifests by
+	// the coordinator (min/max/distinct_count_estimate) — JSON array of
+	// atlas_insights::MergedColumnStats. Used by "summary" and "quality".
+	ColumnStatsJson string `protobuf:"bytes,6,opt,name=column_stats_json,json=columnStatsJson,proto3" json:"column_stats_json,omitempty"`
+	// Extra bounded row sample (e.g. LIMIT 10000), for "quality"'s duplicate
+	// row detection, which needs actual rows rather than stats.
+	SampleArrowIpc []byte `protobuf:"bytes,7,opt,name=sample_arrow_ipc,json=sampleArrowIpc,proto3" json:"sample_arrow_ipc,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *AnalyzeRequest) Reset() {
+	*x = AnalyzeRequest{}
+	mi := &file_worker_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AnalyzeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AnalyzeRequest) ProtoMessage() {}
+
+func (x *AnalyzeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AnalyzeRequest.ProtoReflect.Descriptor instead.
+func (*AnalyzeRequest) Descriptor() ([]byte, []int) {
+	return file_worker_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *AnalyzeRequest) GetArrowIpc() []byte {
+	if x != nil {
+		return x.ArrowIpc
+	}
+	return nil
+}
+
+func (x *AnalyzeRequest) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *AnalyzeRequest) GetGroupByColumn() string {
+	if x != nil {
+		return x.GroupByColumn
+	}
+	return ""
+}
+
+func (x *AnalyzeRequest) GetValueColumn() string {
+	if x != nil {
+		return x.ValueColumn
+	}
+	return ""
+}
+
+func (x *AnalyzeRequest) GetTimeColumn() string {
+	if x != nil {
+		return x.TimeColumn
+	}
+	return ""
+}
+
+func (x *AnalyzeRequest) GetColumnStatsJson() string {
+	if x != nil {
+		return x.ColumnStatsJson
+	}
+	return ""
+}
+
+func (x *AnalyzeRequest) GetSampleArrowIpc() []byte {
+	if x != nil {
+		return x.SampleArrowIpc
+	}
+	return nil
+}
+
+type AnalyzeResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// JSON-serialized finding(s) — shape depends on `kind`: a DatasetSummary
+	// for "summary", a Vec<QualityFinding>/Vec<OutlierFinding> for
+	// "quality"/"outlier", or a nullable TrendFinding for "trend".
+	FindingsJson  string `protobuf:"bytes,1,opt,name=findings_json,json=findingsJson,proto3" json:"findings_json,omitempty"`
+	Error         string `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AnalyzeResponse) Reset() {
+	*x = AnalyzeResponse{}
+	mi := &file_worker_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AnalyzeResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AnalyzeResponse) ProtoMessage() {}
+
+func (x *AnalyzeResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_worker_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AnalyzeResponse.ProtoReflect.Descriptor instead.
+func (*AnalyzeResponse) Descriptor() ([]byte, []int) {
+	return file_worker_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *AnalyzeResponse) GetFindingsJson() string {
+	if x != nil {
+		return x.FindingsJson
+	}
+	return ""
+}
+
+func (x *AnalyzeResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 var File_worker_proto protoreflect.FileDescriptor
 
 const file_worker_proto_rawDesc = "" +
@@ -589,12 +745,25 @@ const file_worker_proto_rawDesc = "" +
 	"\x10HeartbeatRequest\"Q\n" +
 	"\x11HeartbeatResponse\x12\x14\n" +
 	"\x05alive\x18\x01 \x01(\bR\x05alive\x12&\n" +
-	"\x0fin_flight_tasks\x18\x02 \x01(\x05R\rinFlightTasks2\xc4\x02\n" +
+	"\x0fin_flight_tasks\x18\x02 \x01(\x05R\rinFlightTasks\"\x83\x02\n" +
+	"\x0eAnalyzeRequest\x12\x1b\n" +
+	"\tarrow_ipc\x18\x01 \x01(\fR\barrowIpc\x12\x12\n" +
+	"\x04kind\x18\x02 \x01(\tR\x04kind\x12&\n" +
+	"\x0fgroup_by_column\x18\x03 \x01(\tR\rgroupByColumn\x12!\n" +
+	"\fvalue_column\x18\x04 \x01(\tR\vvalueColumn\x12\x1f\n" +
+	"\vtime_column\x18\x05 \x01(\tR\n" +
+	"timeColumn\x12*\n" +
+	"\x11column_stats_json\x18\x06 \x01(\tR\x0fcolumnStatsJson\x12(\n" +
+	"\x10sample_arrow_ipc\x18\a \x01(\fR\x0esampleArrowIpc\"L\n" +
+	"\x0fAnalyzeResponse\x12#\n" +
+	"\rfindings_json\x18\x01 \x01(\tR\ffindingsJson\x12\x14\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error2\x8c\x03\n" +
 	"\rWorkerService\x12F\n" +
 	"\aCompile\x12\x1c.atlas.worker.CompileRequest\x1a\x1d.atlas.worker.CompileResponse\x12V\n" +
 	"\x0fCompileFromPlan\x12$.atlas.worker.CompileFromPlanRequest\x1a\x1d.atlas.worker.CompileResponse\x12E\n" +
 	"\vExecuteTask\x12\x19.atlas.worker.TaskRequest\x1a\x19.atlas.worker.ResultBatch0\x01\x12L\n" +
-	"\tHeartbeat\x12\x1e.atlas.worker.HeartbeatRequest\x1a\x1f.atlas.worker.HeartbeatResponseB.Z,atlas/coordinator/internal/workerpb;workerpbb\x06proto3"
+	"\tHeartbeat\x12\x1e.atlas.worker.HeartbeatRequest\x1a\x1f.atlas.worker.HeartbeatResponse\x12F\n" +
+	"\aAnalyze\x12\x1c.atlas.worker.AnalyzeRequest\x1a\x1d.atlas.worker.AnalyzeResponseB.Z,atlas/coordinator/internal/workerpb;workerpbb\x06proto3"
 
 var (
 	file_worker_proto_rawDescOnce sync.Once
@@ -608,7 +777,7 @@ func file_worker_proto_rawDescGZIP() []byte {
 	return file_worker_proto_rawDescData
 }
 
-var file_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_worker_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_worker_proto_goTypes = []any{
 	(*CompileRequest)(nil),         // 0: atlas.worker.CompileRequest
 	(*CompileFromPlanRequest)(nil), // 1: atlas.worker.CompileFromPlanRequest
@@ -619,23 +788,27 @@ var file_worker_proto_goTypes = []any{
 	(*ResultBatch)(nil),            // 6: atlas.worker.ResultBatch
 	(*HeartbeatRequest)(nil),       // 7: atlas.worker.HeartbeatRequest
 	(*HeartbeatResponse)(nil),      // 8: atlas.worker.HeartbeatResponse
+	(*AnalyzeRequest)(nil),         // 9: atlas.worker.AnalyzeRequest
+	(*AnalyzeResponse)(nil),        // 10: atlas.worker.AnalyzeResponse
 }
 var file_worker_proto_depIdxs = []int32{
-	4, // 0: atlas.worker.TaskRequest.file:type_name -> atlas.worker.FileSource
-	5, // 1: atlas.worker.TaskRequest.inline:type_name -> atlas.worker.InlineSource
-	0, // 2: atlas.worker.WorkerService.Compile:input_type -> atlas.worker.CompileRequest
-	1, // 3: atlas.worker.WorkerService.CompileFromPlan:input_type -> atlas.worker.CompileFromPlanRequest
-	3, // 4: atlas.worker.WorkerService.ExecuteTask:input_type -> atlas.worker.TaskRequest
-	7, // 5: atlas.worker.WorkerService.Heartbeat:input_type -> atlas.worker.HeartbeatRequest
-	2, // 6: atlas.worker.WorkerService.Compile:output_type -> atlas.worker.CompileResponse
-	2, // 7: atlas.worker.WorkerService.CompileFromPlan:output_type -> atlas.worker.CompileResponse
-	6, // 8: atlas.worker.WorkerService.ExecuteTask:output_type -> atlas.worker.ResultBatch
-	8, // 9: atlas.worker.WorkerService.Heartbeat:output_type -> atlas.worker.HeartbeatResponse
-	6, // [6:10] is the sub-list for method output_type
-	2, // [2:6] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	4,  // 0: atlas.worker.TaskRequest.file:type_name -> atlas.worker.FileSource
+	5,  // 1: atlas.worker.TaskRequest.inline:type_name -> atlas.worker.InlineSource
+	0,  // 2: atlas.worker.WorkerService.Compile:input_type -> atlas.worker.CompileRequest
+	1,  // 3: atlas.worker.WorkerService.CompileFromPlan:input_type -> atlas.worker.CompileFromPlanRequest
+	3,  // 4: atlas.worker.WorkerService.ExecuteTask:input_type -> atlas.worker.TaskRequest
+	7,  // 5: atlas.worker.WorkerService.Heartbeat:input_type -> atlas.worker.HeartbeatRequest
+	9,  // 6: atlas.worker.WorkerService.Analyze:input_type -> atlas.worker.AnalyzeRequest
+	2,  // 7: atlas.worker.WorkerService.Compile:output_type -> atlas.worker.CompileResponse
+	2,  // 8: atlas.worker.WorkerService.CompileFromPlan:output_type -> atlas.worker.CompileResponse
+	6,  // 9: atlas.worker.WorkerService.ExecuteTask:output_type -> atlas.worker.ResultBatch
+	8,  // 10: atlas.worker.WorkerService.Heartbeat:output_type -> atlas.worker.HeartbeatResponse
+	10, // 11: atlas.worker.WorkerService.Analyze:output_type -> atlas.worker.AnalyzeResponse
+	7,  // [7:12] is the sub-list for method output_type
+	2,  // [2:7] is the sub-list for method input_type
+	2,  // [2:2] is the sub-list for extension type_name
+	2,  // [2:2] is the sub-list for extension extendee
+	0,  // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_worker_proto_init() }
@@ -653,7 +826,7 @@ func file_worker_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_worker_proto_rawDesc), len(file_worker_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

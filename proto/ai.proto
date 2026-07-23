@@ -22,6 +22,17 @@ option go_package = "atlas/coordinator/internal/aipb;aipb";
 service AIService {
   rpc NLToQuery(NLRequest) returns (NLResponse);
   rpc Explain(ExplainRequest) returns (ExplainResponse);
+  // Phase 7 (AI Analyst): narrates a dataset's already-computed structured
+  // findings (from atlas-insights, via the coordinator's summary/insights
+  // pipeline) in plain English — same "engine is source of truth" boundary
+  // as Explain: the LLM narrates numbers that already exist, it never
+  // invents them.
+  rpc NarrateFindings(NarrateFindingsRequest) returns (NarrateFindingsResponse);
+  // Generates candidate questions for a dataset and returns only the ones
+  // that actually produce a valid plan when run back through NLToQuery's
+  // underlying nl_to_plan — every returned question is guaranteed
+  // answerable, not just plausible-sounding.
+  rpc SuggestQuestions(SuggestQuestionsRequest) returns (SuggestQuestionsResponse);
 }
 
 message NLRequest {
@@ -45,4 +56,31 @@ message ExplainRequest {
 
 message ExplainResponse {
   string explanation = 1;
+}
+
+message NarrateFindingsRequest {
+  // JSON object combining a dataset's DatasetSummary and QualityFinding /
+  // OutlierFinding / TrendFinding lists (atlas_insights shapes, produced by
+  // the coordinator's summary/insights pipeline) — the only numbers the
+  // narration is allowed to state.
+  string findings_json = 1;
+}
+
+message NarrateFindingsResponse {
+  string narrative = 1;
+}
+
+message SuggestQuestionsRequest {
+  string schema_json = 1;
+  // JSON-serialized DatasetSummary (atlas_insights shape) — gives the LLM
+  // enough context (columns, null rates, distinct counts) to propose
+  // sensible questions.
+  string summary_json = 2;
+}
+
+message SuggestQuestionsResponse {
+  // Already filtered: every entry produced a valid plan when run through
+  // nl_to_plan. May be fewer than requested if some candidates didn't
+  // validate.
+  repeated string questions = 1;
 }

@@ -29,8 +29,9 @@ use crate::split::split_for_distribution;
 use crate::telemetry::span_from_metadata;
 use crate::worker_pb::worker_service_server::WorkerService;
 use crate::worker_pb::{
-    task_request::Source, CompileFromPlanRequest, CompileRequest, CompileResponse,
-    HeartbeatRequest, HeartbeatResponse, ResultBatch, TaskRequest,
+    task_request::Source, AnalyzeRequest, AnalyzeResponse, CompileFromPlanRequest,
+    CompileRequest, CompileResponse, HeartbeatRequest, HeartbeatResponse, ResultBatch,
+    TaskRequest,
 };
 
 #[derive(Default)]
@@ -144,6 +145,62 @@ fn run_task(req: TaskRequest) -> Result<Vec<RecordBatch>> {
     atlas_exec::execute(&plan, batches)
 }
 
+// Phase 7 (AI Analyst): dispatches one atlas-insights check over batches the
+// coordinator already produced via ordinary queries (never a raw file scan
+// — the coordinator's summary/quality/outlier/trend queries all go through
+// the normal Compile+ExecuteTask path first). This is the one place a
+// worker interprets Arrow bytes outside of `run_task`'s query-execution
+// path.
+fn run_analyze(req: AnalyzeRequest) -> Result<String> {
+    match req.kind.as_str() {
+        "summary" => {
+            let count_batches = ipc::decode_batches(&req.arrow_ipc)?;
+            let count_batch = count_batches
+                .first()
+                .context("summary analyze: missing count batch")?;
+            let stats: Vec<atlas_insights::MergedColumnStats> =
+                serde_json::from_str(&req.column_stats_json)
+                    .context("parsing column_stats_json as MergedColumnStats")?;
+            let summary = atlas_insights::build_summary(count_batch, &stats)
+                .context("building summary from count batch")?;
+            serde_json::to_string(&summary).context("serializing summary")
+        }
+        "quality" => {
+            let columns: Vec<atlas_insights::ColumnSummary> =
+                serde_json::from_str(&req.column_stats_json)
+                    .context("parsing column_stats_json as ColumnSummary")?;
+            let sample = if req.sample_arrow_ipc.is_empty() {
+                Vec::new()
+            } else {
+                ipc::decode_batches(&req.sample_arrow_ipc)?
+            };
+            let findings = atlas_insights::detect_data_quality_issues(&columns, &sample);
+            serde_json::to_string(&findings).context("serializing quality findings")
+        }
+        "outlier" => {
+            let batches = ipc::decode_batches(&req.arrow_ipc)?;
+            let batch = batches
+                .first()
+                .context("outlier analyze: missing grouped batch")?;
+            let findings = atlas_insights::detect_outlier_groups(
+                batch,
+                &req.group_by_column,
+                &req.value_column,
+            );
+            serde_json::to_string(&findings).context("serializing outlier findings")
+        }
+        "trend" => {
+            let batches = ipc::decode_batches(&req.arrow_ipc)?;
+            let batch = batches
+                .first()
+                .context("trend analyze: missing time series batch")?;
+            let finding = atlas_insights::detect_trend(batch, &req.time_column, &req.value_column);
+            serde_json::to_string(&finding).context("serializing trend finding")
+        }
+        other => Err(anyhow!("unsupported analyze kind {other:?}")),
+    }
+}
+
 #[tonic::async_trait]
 impl WorkerService for WorkerServiceImpl {
     type ExecuteTaskStream =
@@ -243,6 +300,29 @@ impl WorkerService for WorkerServiceImpl {
             Ok(Response::new(
                 Box::pin(stream) as Self::ExecuteTaskStream
             ))
+        }
+        .instrument(span)
+        .await
+    }
+
+    async fn analyze(
+        &self,
+        request: Request<AnalyzeRequest>,
+    ) -> Result<Response<AnalyzeResponse>, Status> {
+        let span = span_from_metadata(request.metadata(), "Analyze");
+        async move {
+            let req = request.into_inner();
+            let response = match run_analyze(req) {
+                Ok(findings_json) => AnalyzeResponse {
+                    findings_json,
+                    error: String::new(),
+                },
+                Err(err) => AnalyzeResponse {
+                    findings_json: String::new(),
+                    error: format!("{err:#}"),
+                },
+            };
+            Ok(Response::new(response))
         }
         .instrument(span)
         .await
@@ -385,5 +465,130 @@ mod tests {
         assert_eq!(via_sql.optimized_plan_json, via_plan.optimized_plan_json);
         assert_eq!(via_sql.partial_plan_json, via_plan.partial_plan_json);
         assert_eq!(via_sql.combine_plan_json, via_plan.combine_plan_json);
+    }
+
+    mod analyze_tests {
+        use super::*;
+        use arrow::array::{Float64Array, Int64Array, StringArray};
+        use arrow::datatypes::{DataType as ArrowDataType, Field as ArrowField, Schema as ArrowSchema};
+        use atlas_insights::{DatasetSummary, MergedColumnStats, OutlierFinding, QualityFinding};
+        use base64::engine::general_purpose::STANDARD as BASE64;
+        use base64::Engine;
+        use std::sync::Arc;
+
+        fn count_batch() -> RecordBatch {
+            let schema = Arc::new(ArrowSchema::new(vec![
+                ArrowField::new("total_rows", ArrowDataType::Int64, false),
+                ArrowField::new("age_non_null", ArrowDataType::Int64, false),
+            ]));
+            RecordBatch::try_new(
+                schema,
+                vec![
+                    Arc::new(Int64Array::from(vec![10i64])),
+                    Arc::new(Int64Array::from(vec![8i64])),
+                ],
+            )
+            .unwrap()
+        }
+
+        fn grouped_batch() -> RecordBatch {
+            let schema = Arc::new(ArrowSchema::new(vec![
+                ArrowField::new("hospital", ArrowDataType::Utf8, false),
+                ArrowField::new("rate", ArrowDataType::Float64, false),
+            ]));
+            RecordBatch::try_new(
+                schema,
+                vec![
+                    Arc::new(StringArray::from(vec!["A", "B", "C", "D", "E", "F"])),
+                    Arc::new(Float64Array::from(vec![10.0, 11.0, 9.0, 12.0, 10.0, 50.0])),
+                ],
+            )
+            .unwrap()
+        }
+
+        #[test]
+        fn summary_kind_combines_count_batch_with_manifest_stats() {
+            let stats = vec![MergedColumnStats {
+                name: "age".to_string(),
+                data_type: "Int64".to_string(),
+                distinct_count_estimate: 5,
+                min_base64: Some(BASE64.encode(10i64.to_le_bytes())),
+                max_base64: Some(BASE64.encode(90i64.to_le_bytes())),
+            }];
+            let req = AnalyzeRequest {
+                arrow_ipc: ipc::encode_batches(&[count_batch()]).unwrap(),
+                kind: "summary".to_string(),
+                group_by_column: String::new(),
+                value_column: String::new(),
+                time_column: String::new(),
+                column_stats_json: serde_json::to_string(&stats).unwrap(),
+                sample_arrow_ipc: Vec::new(),
+            };
+
+            let findings_json = run_analyze(req).unwrap();
+            let summary: DatasetSummary = serde_json::from_str(&findings_json).unwrap();
+            assert_eq!(summary.row_count, 10);
+            assert_eq!(summary.columns[0].name, "age");
+        }
+
+        #[test]
+        fn quality_kind_flags_high_null_rate_from_column_summaries() {
+            let columns = vec![atlas_insights::ColumnSummary {
+                name: "notes".to_string(),
+                data_type: "Utf8".to_string(),
+                null_rate: 0.5,
+                distinct_count_estimate: 2,
+                min: Some("a".to_string()),
+                max: Some("z".to_string()),
+            }];
+            let req = AnalyzeRequest {
+                arrow_ipc: Vec::new(),
+                kind: "quality".to_string(),
+                group_by_column: String::new(),
+                value_column: String::new(),
+                time_column: String::new(),
+                column_stats_json: serde_json::to_string(&columns).unwrap(),
+                sample_arrow_ipc: Vec::new(),
+            };
+
+            let findings_json = run_analyze(req).unwrap();
+            let findings: Vec<QualityFinding> = serde_json::from_str(&findings_json).unwrap();
+            assert!(matches!(
+                findings[0],
+                QualityFinding::HighNullRate { ref column, .. } if column == "notes"
+            ));
+        }
+
+        #[test]
+        fn outlier_kind_detects_a_clear_outlier_group() {
+            let req = AnalyzeRequest {
+                arrow_ipc: ipc::encode_batches(&[grouped_batch()]).unwrap(),
+                kind: "outlier".to_string(),
+                group_by_column: "hospital".to_string(),
+                value_column: "rate".to_string(),
+                time_column: String::new(),
+                column_stats_json: String::new(),
+                sample_arrow_ipc: Vec::new(),
+            };
+
+            let findings_json = run_analyze(req).unwrap();
+            let findings: Vec<OutlierFinding> = serde_json::from_str(&findings_json).unwrap();
+            assert_eq!(findings.len(), 1);
+            assert_eq!(findings[0].group, "F");
+        }
+
+        #[test]
+        fn unsupported_kind_is_an_error() {
+            let req = AnalyzeRequest {
+                arrow_ipc: Vec::new(),
+                kind: "bogus".to_string(),
+                group_by_column: String::new(),
+                value_column: String::new(),
+                time_column: String::new(),
+                column_stats_json: String::new(),
+                sample_arrow_ipc: Vec::new(),
+            };
+            assert!(run_analyze(req).is_err());
+        }
     }
 }

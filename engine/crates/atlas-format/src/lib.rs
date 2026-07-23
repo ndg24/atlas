@@ -4,6 +4,7 @@
 pub mod footer;
 #[cfg(test)]
 mod format_tests;
+mod hll;
 mod iceberg;
 mod page;
 mod parquet;

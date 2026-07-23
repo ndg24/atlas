@@ -198,7 +198,7 @@ type Manifest struct {
 	RowCount            int64                  `protobuf:"varint,5,opt,name=row_count,json=rowCount,proto3" json:"row_count,omitempty"`
 	FileSizeBytes       int64                  `protobuf:"varint,6,opt,name=file_size_bytes,json=fileSizeBytes,proto3" json:"file_size_bytes,omitempty"`
 	ColumnStatsJson     string                 `protobuf:"bytes,7,opt,name=column_stats_json,json=columnStatsJson,proto3" json:"column_stats_json,omitempty"` // {column: {min, max, null_count}}
-	Format              string                 `protobuf:"bytes,8,opt,name=format,proto3" json:"format,omitempty"`                                            // "atlas" | "parquet" (future: "iceberg")
+	Format              string                 `protobuf:"bytes,8,opt,name=format,proto3" json:"format,omitempty"`                                            // "atlas" | "parquet" | "iceberg"
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -548,7 +548,7 @@ type ManifestInput struct {
 	RowCount            int64                  `protobuf:"varint,3,opt,name=row_count,json=rowCount,proto3" json:"row_count,omitempty"`
 	FileSizeBytes       int64                  `protobuf:"varint,4,opt,name=file_size_bytes,json=fileSizeBytes,proto3" json:"file_size_bytes,omitempty"`
 	ColumnStatsJson     string                 `protobuf:"bytes,5,opt,name=column_stats_json,json=columnStatsJson,proto3" json:"column_stats_json,omitempty"`
-	Format              string                 `protobuf:"bytes,6,opt,name=format,proto3" json:"format,omitempty"` // "atlas" | "parquet" (future: "iceberg")
+	Format              string                 `protobuf:"bytes,6,opt,name=format,proto3" json:"format,omitempty"` // "atlas" | "parquet" | "iceberg"
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }

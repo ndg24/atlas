@@ -12,6 +12,7 @@ import grpc
 
 from .config import Config
 from .explain import narrate_result
+from .insights import narrate_findings, suggest_questions
 from .pb import ai_pb2, ai_pb2_grpc
 from .plan.planner import NLToPlanError, nl_to_plan
 from .providers.litellm_provider import LiteLLMProvider
@@ -33,6 +34,18 @@ class AIServiceImpl(ai_pb2_grpc.AIServiceServicer):
     async def Explain(self, request: ai_pb2.ExplainRequest, context: grpc.aio.ServicerContext) -> ai_pb2.ExplainResponse:
         explanation = narrate_result(request.question, request.result_arrow_ipc, self._provider)
         return ai_pb2.ExplainResponse(explanation=explanation)
+
+    async def NarrateFindings(
+        self, request: ai_pb2.NarrateFindingsRequest, context: grpc.aio.ServicerContext
+    ) -> ai_pb2.NarrateFindingsResponse:
+        narrative = narrate_findings(request.findings_json, self._provider)
+        return ai_pb2.NarrateFindingsResponse(narrative=narrative)
+
+    async def SuggestQuestions(
+        self, request: ai_pb2.SuggestQuestionsRequest, context: grpc.aio.ServicerContext
+    ) -> ai_pb2.SuggestQuestionsResponse:
+        questions = suggest_questions(request.schema_json, request.summary_json, self._provider)
+        return ai_pb2.SuggestQuestionsResponse(questions=questions)
 
 
 async def serve() -> None:

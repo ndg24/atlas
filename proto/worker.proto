@@ -37,6 +37,14 @@ service WorkerService {
   rpc CompileFromPlan(CompileFromPlanRequest) returns (CompileResponse);
   rpc ExecuteTask(TaskRequest) returns (stream ResultBatch);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  // Phase 7 (AI Analyst): runs one atlas-insights statistical check over
+  // already-computed batches the coordinator hands it (a summary count
+  // batch, a grouped aggregate result, a bounded row sample — never a raw
+  // file scan). The coordinator never decodes Arrow itself; this RPC is the
+  // one place Arrow bytes get interpreted for the summary/insights path,
+  // keeping that invariant intact the same way ExecuteTask/ResultBatch does
+  // for query execution.
+  rpc Analyze(AnalyzeRequest) returns (AnalyzeResponse);
 }
 
 message CompileRequest {
@@ -94,4 +102,31 @@ message HeartbeatRequest {}
 message HeartbeatResponse {
   bool alive = 1;
   int32 in_flight_tasks = 2;
+}
+
+message AnalyzeRequest {
+  // Self-contained Arrow IPC stream to analyze (a summary count-batch, a
+  // grouped aggregate result, or a bounded row sample — meaning depends on
+  // `kind`).
+  bytes arrow_ipc = 1;
+  // "summary" | "quality" | "outlier" | "trend"
+  string kind = 2;
+  string group_by_column = 3; // outlier
+  string value_column = 4;    // outlier, trend
+  string time_column = 5;     // trend
+  // Per-column catalog stats already merged across a dataset's manifests by
+  // the coordinator (min/max/distinct_count_estimate) — JSON array of
+  // atlas_insights::MergedColumnStats. Used by "summary" and "quality".
+  string column_stats_json = 6;
+  // Extra bounded row sample (e.g. LIMIT 10000), for "quality"'s duplicate
+  // row detection, which needs actual rows rather than stats.
+  bytes sample_arrow_ipc = 7;
+}
+
+message AnalyzeResponse {
+  // JSON-serialized finding(s) — shape depends on `kind`: a DatasetSummary
+  // for "summary", a Vec<QualityFinding>/Vec<OutlierFinding> for
+  // "quality"/"outlier", or a nullable TrendFinding for "trend".
+  string findings_json = 1;
+  string error = 2;
 }

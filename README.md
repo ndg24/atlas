@@ -13,7 +13,7 @@ Data gets ingested into Atlas's own `.atlas` columnar format (or Parquet), split
 - **Distributed, fault-tolerant execution** — the coordinator schedules one task per manifest/partition across registered workers (heartbeat-tracked, least-loaded assignment), streams partial results back over gRPC, and merges them per plan shape — a second aggregation pass for `GROUP BY`, a k-way merge for `ORDER BY` + `LIMIT`. A task whose worker misses its heartbeat or errors mid-stream is retried on a different live worker (up to 3 attempts) without failing the query.
 - **Rule-based query optimization** — column pruning and predicate pushdown rewrite the logical plan itself; partition pruning drops whole manifests using their partition values and column statistics before scheduling; a Redis-backed result cache is keyed on the hash of the *optimized* plan plus the dataset's snapshot id, so equivalent queries hit cache and a new ingest invalidates exactly the datasets it touched. `POST /explain` surfaces the plan before and after optimization, plus which manifests survived pruning and whether the result was served from cache.
 - **Natural-language querying, same execution path as SQL** — an LLM (Anthropic, OpenAI, Gemini, or a local Ollama model, selected purely by environment variable through a provider-agnostic layer) compiles a question into the identical `LogicalPlan` a SQL query would produce, validated against the protobuf schema and re-prompted once on failure. From there it runs through the unchanged optimize → schedule → execute path — an NL query and its SQL equivalent return byte-identical results.
-- **AI analyst** — dataset summaries, outlier detection, trend detection, and data-quality flags (null rates, zero-variance columns, duplicates) are computed as plain statistical functions over query results, not invented by an LLM; the LLM's only job is narrating those pre-computed findings into readable sentences, one claim per input finding. Suggested example questions are only ever shown after they've been round-tripped through the NL compiler and confirmed to produce a valid, runnable plan.
+- **AI analyst** — `POST /datasets/{name}/summary` runs a fixed set of aggregate queries through the unmodified engine (row/column counts, per-column null rate, distinct-count estimate) and returns pure engine output, no LLM involved. `POST /datasets/{name}/insights` builds on it: data-quality flags (high null rate, zero-variance columns, duplicate rows) are computed as plain statistical functions over query results (`atlas-insights`, dispatched via the worker's `Analyze` RPC), not invented by an LLM — the LLM's only job is narrating those pre-computed findings into readable sentences, one claim per finding, plus proposing example questions that are only ever surfaced after round-tripping through the NL compiler and confirming they produce a valid, runnable plan. Outlier detection (z-score) and trend detection (linear regression) are implemented in `atlas-insights` and exercised at the worker layer, but not yet wired into `/insights` — both need a group/value/time column choice this fixed, dataset-agnostic pipeline has no principled way to make yet.
 - **Multi-agent research mode** — a sequential Planner → Query → Execution → Visualization → Explanation → Report pipeline decomposes an open-ended question into structured sub-questions (run through the existing query engine) and literature sub-questions (answered via `pgvector`-backed retrieval over an ingested corpus). The final report tags every claim `[data]` or `[literature:doc_id]`, so structured results and retrieved literature are never blended without attribution.
 - **Auth and observability on the coordinator/catalog/worker path** — every coordinator REST route requires a JWT bearer token (`internal/auth`, `internal/api/middleware.go`); there's no login flow yet, so tokens come from a dev CLI (`go run ./cmd/tokengen`) signed against a required `JWT_SECRET`, and a `workspaces`/`users` schema exists with a single seeded default workspace — groundwork for per-workspace scoping, not yet enforced on catalog reads. OpenTelemetry traces a request from the REST entry point through gRPC to the catalog and, via a W3C `traceparent` header riding in gRPC metadata, into the Rust worker — one trace id spans all three, visible in the `jaeger` service docker-compose adds when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (unset by default outside compose, so every binary still runs standalone with zero extra infra). Prometheus (`GET /metrics` on the coordinator, a dedicated port on the catalog and each worker) tracks cache hit/miss, task dispatch duration/count, gRPC request duration/count, and worker task duration/in-flight count — LLM latency/token counts will follow once Phase 6's AI service exists. Neither the AI-service trace hop nor LLM metrics exist yet, since there's no AI service (see below).
 
@@ -58,8 +58,9 @@ engine/             # Rust workspace
     atlas-storage/   # CSV + columnar reads, object-store abstraction
     atlas-query/     # SQL parsing + logical plan construction
     atlas-optimizer/ # column pruning, predicate pushdown, rule engine
-    atlas-exec/      # logical plan execution, statistical insight functions
-    atlas-worker/    # gRPC worker: executes assigned task against one partition
+    atlas-exec/      # logical plan execution
+    atlas-insights/  # outlier/trend/quality/summary statistical finding functions
+    atlas-worker/    # gRPC worker: executes assigned task against one partition, dispatches Analyze
     atlas-cli/       # the `atlas-cli` binary (ingest / query / explain)
 coordinator/         # Go: REST API, scheduler, worker registry, result cache
   cmd/
@@ -69,10 +70,11 @@ coordinator/         # Go: REST API, scheduler, worker registry, result cache
     catalog/
     scheduler/
     api/
-ai-service/          # Python: LLM abstraction, NL→plan (Phase 6); insights/agents/retrieval land in Phase 7-8
+ai-service/          # Python: LLM abstraction, NL→plan (Phase 6), AI analyst (Phase 7); agents/retrieval land in Phase 8
   atlas_ai/
     providers/       # ModelProvider Protocol + litellm-backed adapter
     plan/            # schema.py (LogicalPlan mirror + validation), prompt.py, planner.py (nl_to_plan)
+    insights/        # narrate.py (narrate_findings), suggest.py (suggest_questions, gated on nl_to_plan)
     pb/              # generated from proto/ai.proto (grpcio-tools)
     explain.py        # narrates an already-executed result (Arrow IPC) in plain English
     server.py         # grpc.aio AIService server, port 9092
@@ -150,11 +152,13 @@ curl localhost:8080/metrics
 # unchanged optimize -> schedule -> execute path; same bearer token as /query
 curl -X POST localhost:8080/query/nl -H "Authorization: Bearer $ATLAS_TOKEN" -d '{"dataset": "patients", "question": "which diagnosis is most common?"}'
 
-# --- everything below is not implemented yet (Phases 7-8) ---
+# statistically-grounded dataset summary -- pure engine, no LLM call
+curl -X POST localhost:8080/datasets/patients/summary -H "Authorization: Bearer $ATLAS_TOKEN"
 
-# statistically-grounded summary + LLM-narrated insights
-curl -X POST localhost:8080/datasets/patients/summary
-curl -X POST localhost:8080/datasets/patients/insights
+# summary + data-quality findings + LLM narration + suggested questions
+curl -X POST localhost:8080/datasets/patients/insights -H "Authorization: Bearer $ATLAS_TOKEN"
+
+# --- everything below is not implemented yet (Phase 8) ---
 
 # multi-agent research report over structured data + retrieved literature
 curl -X POST localhost:8080/research -d '{"question": "...", "dataset": "patients", "corpus_id": "..."}'

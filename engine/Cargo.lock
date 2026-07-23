@@ -445,6 +445,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-insights"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+ "base64",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "atlas-optimizer"
 version = "0.1.0"
 dependencies = [
@@ -486,8 +496,10 @@ dependencies = [
  "arrow",
  "atlas-exec",
  "atlas-format",
+ "atlas-insights",
  "atlas-optimizer",
  "atlas-query",
+ "base64",
  "clap",
  "metrics",
  "metrics-exporter-prometheus",

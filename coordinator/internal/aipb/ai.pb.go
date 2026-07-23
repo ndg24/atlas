@@ -239,6 +239,200 @@ func (x *ExplainResponse) GetExplanation() string {
 	return ""
 }
 
+type NarrateFindingsRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// JSON object combining a dataset's DatasetSummary and QualityFinding /
+	// OutlierFinding / TrendFinding lists (atlas_insights shapes, produced by
+	// the coordinator's summary/insights pipeline) — the only numbers the
+	// narration is allowed to state.
+	FindingsJson  string `protobuf:"bytes,1,opt,name=findings_json,json=findingsJson,proto3" json:"findings_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NarrateFindingsRequest) Reset() {
+	*x = NarrateFindingsRequest{}
+	mi := &file_ai_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NarrateFindingsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NarrateFindingsRequest) ProtoMessage() {}
+
+func (x *NarrateFindingsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NarrateFindingsRequest.ProtoReflect.Descriptor instead.
+func (*NarrateFindingsRequest) Descriptor() ([]byte, []int) {
+	return file_ai_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *NarrateFindingsRequest) GetFindingsJson() string {
+	if x != nil {
+		return x.FindingsJson
+	}
+	return ""
+}
+
+type NarrateFindingsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Narrative     string                 `protobuf:"bytes,1,opt,name=narrative,proto3" json:"narrative,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NarrateFindingsResponse) Reset() {
+	*x = NarrateFindingsResponse{}
+	mi := &file_ai_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NarrateFindingsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NarrateFindingsResponse) ProtoMessage() {}
+
+func (x *NarrateFindingsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NarrateFindingsResponse.ProtoReflect.Descriptor instead.
+func (*NarrateFindingsResponse) Descriptor() ([]byte, []int) {
+	return file_ai_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *NarrateFindingsResponse) GetNarrative() string {
+	if x != nil {
+		return x.Narrative
+	}
+	return ""
+}
+
+type SuggestQuestionsRequest struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	SchemaJson string                 `protobuf:"bytes,1,opt,name=schema_json,json=schemaJson,proto3" json:"schema_json,omitempty"`
+	// JSON-serialized DatasetSummary (atlas_insights shape) — gives the LLM
+	// enough context (columns, null rates, distinct counts) to propose
+	// sensible questions.
+	SummaryJson   string `protobuf:"bytes,2,opt,name=summary_json,json=summaryJson,proto3" json:"summary_json,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SuggestQuestionsRequest) Reset() {
+	*x = SuggestQuestionsRequest{}
+	mi := &file_ai_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SuggestQuestionsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SuggestQuestionsRequest) ProtoMessage() {}
+
+func (x *SuggestQuestionsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SuggestQuestionsRequest.ProtoReflect.Descriptor instead.
+func (*SuggestQuestionsRequest) Descriptor() ([]byte, []int) {
+	return file_ai_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *SuggestQuestionsRequest) GetSchemaJson() string {
+	if x != nil {
+		return x.SchemaJson
+	}
+	return ""
+}
+
+func (x *SuggestQuestionsRequest) GetSummaryJson() string {
+	if x != nil {
+		return x.SummaryJson
+	}
+	return ""
+}
+
+type SuggestQuestionsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Already filtered: every entry produced a valid plan when run through
+	// nl_to_plan. May be fewer than requested if some candidates didn't
+	// validate.
+	Questions     []string `protobuf:"bytes,1,rep,name=questions,proto3" json:"questions,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SuggestQuestionsResponse) Reset() {
+	*x = SuggestQuestionsResponse{}
+	mi := &file_ai_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SuggestQuestionsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SuggestQuestionsResponse) ProtoMessage() {}
+
+func (x *SuggestQuestionsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SuggestQuestionsResponse.ProtoReflect.Descriptor instead.
+func (*SuggestQuestionsResponse) Descriptor() ([]byte, []int) {
+	return file_ai_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *SuggestQuestionsResponse) GetQuestions() []string {
+	if x != nil {
+		return x.Questions
+	}
+	return nil
+}
+
 var File_ai_proto protoreflect.FileDescriptor
 
 const file_ai_proto_rawDesc = "" +
@@ -258,10 +452,22 @@ const file_ai_proto_rawDesc = "" +
 	"\bquestion\x18\x01 \x01(\tR\bquestion\x12(\n" +
 	"\x10result_arrow_ipc\x18\x02 \x01(\fR\x0eresultArrowIpc\"3\n" +
 	"\x0fExplainResponse\x12 \n" +
-	"\vexplanation\x18\x01 \x01(\tR\vexplanation2\x83\x01\n" +
+	"\vexplanation\x18\x01 \x01(\tR\vexplanation\"=\n" +
+	"\x16NarrateFindingsRequest\x12#\n" +
+	"\rfindings_json\x18\x01 \x01(\tR\ffindingsJson\"7\n" +
+	"\x17NarrateFindingsResponse\x12\x1c\n" +
+	"\tnarrative\x18\x01 \x01(\tR\tnarrative\"]\n" +
+	"\x17SuggestQuestionsRequest\x12\x1f\n" +
+	"\vschema_json\x18\x01 \x01(\tR\n" +
+	"schemaJson\x12!\n" +
+	"\fsummary_json\x18\x02 \x01(\tR\vsummaryJson\"8\n" +
+	"\x18SuggestQuestionsResponse\x12\x1c\n" +
+	"\tquestions\x18\x01 \x03(\tR\tquestions2\xb6\x02\n" +
 	"\tAIService\x126\n" +
 	"\tNLToQuery\x12\x13.atlas.ai.NLRequest\x1a\x14.atlas.ai.NLResponse\x12>\n" +
-	"\aExplain\x12\x18.atlas.ai.ExplainRequest\x1a\x19.atlas.ai.ExplainResponseB&Z$atlas/coordinator/internal/aipb;aipbb\x06proto3"
+	"\aExplain\x12\x18.atlas.ai.ExplainRequest\x1a\x19.atlas.ai.ExplainResponse\x12V\n" +
+	"\x0fNarrateFindings\x12 .atlas.ai.NarrateFindingsRequest\x1a!.atlas.ai.NarrateFindingsResponse\x12Y\n" +
+	"\x10SuggestQuestions\x12!.atlas.ai.SuggestQuestionsRequest\x1a\".atlas.ai.SuggestQuestionsResponseB&Z$atlas/coordinator/internal/aipb;aipbb\x06proto3"
 
 var (
 	file_ai_proto_rawDescOnce sync.Once
@@ -275,20 +481,28 @@ func file_ai_proto_rawDescGZIP() []byte {
 	return file_ai_proto_rawDescData
 }
 
-var file_ai_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_ai_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_ai_proto_goTypes = []any{
-	(*NLRequest)(nil),       // 0: atlas.ai.NLRequest
-	(*NLResponse)(nil),      // 1: atlas.ai.NLResponse
-	(*ExplainRequest)(nil),  // 2: atlas.ai.ExplainRequest
-	(*ExplainResponse)(nil), // 3: atlas.ai.ExplainResponse
+	(*NLRequest)(nil),                // 0: atlas.ai.NLRequest
+	(*NLResponse)(nil),               // 1: atlas.ai.NLResponse
+	(*ExplainRequest)(nil),           // 2: atlas.ai.ExplainRequest
+	(*ExplainResponse)(nil),          // 3: atlas.ai.ExplainResponse
+	(*NarrateFindingsRequest)(nil),   // 4: atlas.ai.NarrateFindingsRequest
+	(*NarrateFindingsResponse)(nil),  // 5: atlas.ai.NarrateFindingsResponse
+	(*SuggestQuestionsRequest)(nil),  // 6: atlas.ai.SuggestQuestionsRequest
+	(*SuggestQuestionsResponse)(nil), // 7: atlas.ai.SuggestQuestionsResponse
 }
 var file_ai_proto_depIdxs = []int32{
 	0, // 0: atlas.ai.AIService.NLToQuery:input_type -> atlas.ai.NLRequest
 	2, // 1: atlas.ai.AIService.Explain:input_type -> atlas.ai.ExplainRequest
-	1, // 2: atlas.ai.AIService.NLToQuery:output_type -> atlas.ai.NLResponse
-	3, // 3: atlas.ai.AIService.Explain:output_type -> atlas.ai.ExplainResponse
-	2, // [2:4] is the sub-list for method output_type
-	0, // [0:2] is the sub-list for method input_type
+	4, // 2: atlas.ai.AIService.NarrateFindings:input_type -> atlas.ai.NarrateFindingsRequest
+	6, // 3: atlas.ai.AIService.SuggestQuestions:input_type -> atlas.ai.SuggestQuestionsRequest
+	1, // 4: atlas.ai.AIService.NLToQuery:output_type -> atlas.ai.NLResponse
+	3, // 5: atlas.ai.AIService.Explain:output_type -> atlas.ai.ExplainResponse
+	5, // 6: atlas.ai.AIService.NarrateFindings:output_type -> atlas.ai.NarrateFindingsResponse
+	7, // 7: atlas.ai.AIService.SuggestQuestions:output_type -> atlas.ai.SuggestQuestionsResponse
+	4, // [4:8] is the sub-list for method output_type
+	0, // [0:4] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -305,7 +519,7 @@ func file_ai_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ai_proto_rawDesc), len(file_ai_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
