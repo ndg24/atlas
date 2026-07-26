@@ -41,10 +41,10 @@ service AIService {
   // the caller's original bearer token, forwarded verbatim) -- ai-service
   // still never touches the catalog or workers directly, only ever sees
   // results the coordinator already computed. Literature sub-questions are
-  // recognized but retrieval is stubbed to return no documents in this
-  // slice, so every claim in the returned report is tagged [data]; a
-  // future slice wiring in real pgvector retrieval will start producing
-  // [literature:doc_id]-tagged claims too, without changing this RPC shape.
+  // answered via ai_service/atlas_ai/retrieval (embeddings + pgvector
+  // nearest-neighbor search over corpus_id, on the same Postgres instance
+  // as the catalog); the report tags each claim [data] or
+  // [literature:doc_id] depending on which agent produced it.
   rpc Research(ResearchRequest) returns (ResearchResponse);
 }
 
@@ -102,8 +102,9 @@ message ResearchRequest {
   string question = 1;
   string dataset = 2;
   string schema_json = 3;
-  // Reserved for future literature retrieval scoping; accepted but unused
-  // while retrieve() is stubbed to return no documents.
+  // Scopes literature retrieval (atlas_ai/retrieval) to one ingested
+  // corpus's documents. Empty means no literature sub-question can return
+  // any documents, so the report stays entirely [data]-tagged.
   string corpus_id = 4;
   // The caller's original bearer token, forwarded verbatim as
   // "Authorization: Bearer <auth_token>" on ExecutionAgent's loopback call

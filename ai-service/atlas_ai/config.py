@@ -19,6 +19,18 @@ class Config:
     llm_model: str
     listen_addr: str
     coordinator_url: str
+    # Phase 8 literature retrieval (atlas_ai/retrieval): embeddings go
+    # through litellm the same way completions do (embeddings.py mirrors
+    # providers/litellm_provider.py), defaulting to the same ollama runtime
+    # so BYO-model stays consistent across completion and embedding calls.
+    embedding_provider: str
+    embedding_model: str
+    # corpus_documents (coordinator/internal/catalog/migrations/0008_*)
+    # lives on the same Postgres instance as the catalog, not a second
+    # datastore — the ai-service connects to it directly for retrieval,
+    # bypassing CatalogService since corpus documents aren't dataset
+    # metadata.
+    database_url: str
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -33,4 +45,7 @@ class Config:
             # POST /query/nl for each structured sub-question — this is where
             # it finds it. docker-compose points it at "http://coordinator:8080".
             coordinator_url=env_or("COORDINATOR_URL", "http://localhost:8080"),
+            embedding_provider=env_or("ATLAS_EMBEDDING_PROVIDER", "ollama"),
+            embedding_model=env_or("ATLAS_EMBEDDING_MODEL", "nomic-embed-text"),
+            database_url=env_or("DATABASE_URL", "postgres://atlas:atlas@localhost:5432/atlas"),
         )

@@ -1,20 +1,29 @@
 """Literature retrieval over an ingested corpus (docs/atlas-implementation-spec.md
-Phase 8, task 4): embeddings-backed nearest-neighbor search over `pgvector`,
-returning the documents most relevant to a literature sub-question.
+Phase 8, task 4): embeddings-backed nearest-neighbor search over `pgvector`
+(store.py), returning the documents most relevant to a literature
+sub-question. The pipeline (`../agents/report_agent.py`) calls `retrieve`
+and tags whatever it returns `[literature:doc_id]` -- a corpus with no
+ingested documents (or a request with no corpus_id) simply returns no
+documents, so every claim in that report stays `[data]`-tagged, same
+observable behavior as before this was wired in.
 
-Not implemented yet — `retrieve` always returns no documents. Corpus
-ingestion (PDFs/abstracts), embeddings, and the `pgvector` lookup itself are
-a fast-follow slice; the pipeline (`../agents/report_agent.py`) already calls
-this function and tags whatever it returns `[literature:doc_id]`, so wiring
-in the real implementation later needs no change to the pipeline shape. Its
-being a stub is also why every claim the pipeline currently produces is
-`[data]`-tagged: with no documents ever returned, no `[literature:...]` claim
-can appear.
+A failure here (Postgres unreachable, `vector` extension missing, embedding
+call failing) is treated as best-effort and swallowed, same as
+ExecutionAgent's "skip on failure, don't fail the whole pipeline" convention
+for structured sub-questions -- literature retrieval is a research-report
+enrichment, not something the whole pipeline should fail over.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
+
+from ..config import Config
+from .embeddings import LiteLLMEmbeddingProvider
+from .store import PgVectorStore
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -25,4 +34,14 @@ class Document:
 
 
 def retrieve(query: str, corpus_id: str, k: int = 5) -> list[Document]:
-    return []
+    if not corpus_id:
+        return []
+    try:
+        config = Config.from_env()
+        provider = LiteLLMEmbeddingProvider(config.embedding_provider, config.embedding_model)
+        [query_embedding] = provider.embed([query])
+        rows = PgVectorStore(config.database_url).search(corpus_id, query_embedding, k)
+    except Exception:
+        logger.exception("retrieval failed for corpus %r; returning no documents", corpus_id)
+        return []
+    return [Document(doc_id=doc_id, text=text, score=score) for doc_id, text, score in rows]
