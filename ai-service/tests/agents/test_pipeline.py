@@ -12,7 +12,9 @@ from __future__ import annotations
 import json
 
 import atlas_ai.agents.pipeline as pipeline_module
+import atlas_ai.retrieval as retrieval
 from atlas_ai.agents.state import PipelineState
+from atlas_ai.retrieval import Document
 
 from ..conftest import MockProvider, encode_ipc_batch
 
@@ -64,3 +66,55 @@ def test_pipeline_produces_a_data_tagged_report_with_no_literature_claims(monkey
     # state_json (what the coordinator's /research response carries back)
     # round-trips cleanly.
     assert json.loads(state.model_dump_json())["report"] == state.report
+
+
+class ScriptedProviderWithLiterature(MockProvider):
+    """Planner decomposes into one structured + one literature sub-question
+    this time, so the full pipeline exercises both of ReportAgent's tagging
+    branches in a single run -- closing Phase 8 task 9's actual DoD, which
+    the stub-era test above couldn't: "a report with both data-sourced and
+    literature-sourced claims"."""
+
+    def __init__(self):
+        super().__init__(response=None)
+
+    def complete(self, prompt: str, **kwargs) -> str:
+        self.calls.append(prompt)
+        if len(self.calls) == 1:
+            return json.dumps(
+                [
+                    {"kind": "structured", "text": "count of patients by hospital"},
+                    {"kind": "literature", "text": "known readmission risk factors"},
+                ]
+            )
+        return "General Hospital has 10 patients, the most of any hospital."
+
+
+def test_pipeline_produces_a_report_with_both_data_and_literature_tagged_claims(monkeypatch):
+    monkeypatch.setattr(pipeline_module, "CoordinatorClient", lambda base_url, auth_token: FakeQueryRunner())
+
+    def fake_retrieve(query, corpus_id, k=5):
+        assert query == "known readmission risk factors"
+        assert corpus_id == "papers"
+        return [Document(doc_id="doc-1", text="Prior admissions are a known risk factor.", score=0.9)]
+
+    monkeypatch.setattr(retrieval, "retrieve", fake_retrieve)
+
+    state = pipeline_module.run_pipeline(
+        question="what predicts readmission, and what does the literature say?",
+        dataset="patients",
+        schema_json='{"fields": [{"name": "hospital", "data_type": "Utf8"}]}',
+        corpus_id="papers",
+        coordinator_url="http://coordinator:8080",
+        auth_token="test-token",
+        provider=ScriptedProviderWithLiterature(),
+    )
+
+    assert "[data]" in state.report
+    assert "10" in state.report  # traces to the actual row the engine returned
+
+    assert "[literature:doc-1]" in state.report
+    assert "Prior admissions are a known risk factor." in state.report  # traces to the actual retrieved document
+
+    assert len(state.documents) == 1
+    assert state.documents[0].doc_id == "doc-1"
