@@ -25,6 +25,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
+	"atlas/coordinator/internal/accounts"
 	aipb "atlas/coordinator/internal/aipb"
 	"atlas/coordinator/internal/cache"
 	catalogpb "atlas/coordinator/internal/catalogpb"
@@ -38,6 +39,7 @@ type Server struct {
 	coordinator *scheduler.Coordinator
 	ai          aipb.AIServiceClient
 	history     *history.Store
+	accounts    *accounts.Store
 	cache       *cache.ResultCache
 	authSecret  []byte
 }
@@ -45,17 +47,19 @@ type Server struct {
 // NewServer wires up the REST API. resultCache may be nil (caching disabled)
 // — every cache access below is guarded accordingly. authSecret signs/
 // validates the bearer tokens every route below requires.
-func NewServer(catalog catalogpb.CatalogServiceClient, coordinator *scheduler.Coordinator, aiClient aipb.AIServiceClient, historyStore *history.Store, resultCache *cache.ResultCache, authSecret []byte) *Server {
-	return &Server{catalog: catalog, coordinator: coordinator, ai: aiClient, history: historyStore, cache: resultCache, authSecret: authSecret}
+func NewServer(catalog catalogpb.CatalogServiceClient, coordinator *scheduler.Coordinator, aiClient aipb.AIServiceClient, historyStore *history.Store, accountsStore *accounts.Store, resultCache *cache.ResultCache, authSecret []byte) *Server {
+	return &Server{catalog: catalog, coordinator: coordinator, ai: aiClient, history: historyStore, accounts: accountsStore, cache: resultCache, authSecret: authSecret}
 }
 
 // Routes returns the full REST API. The application routes are gated by
 // authMiddleware (every one of them requires a valid bearer token);
-// GET /metrics is mounted outside that auth wrapper since Prometheus
-// scrapers don't carry a bearer token. The whole thing is wrapped in
-// otelhttp so every request gets a root trace span, which is what lets the
-// trace id it carries propagate through the coordinator's outbound gRPC
-// calls to the catalog and workers.
+// GET /metrics and POST /auth/{signup,login} are mounted outside that auth
+// wrapper — metrics because Prometheus scrapers don't carry a bearer token,
+// auth because minting a token is the one thing a request without one yet
+// has to be able to do. The whole thing is wrapped in otelhttp so every
+// request gets a root trace span, which is what lets the trace id it
+// carries propagate through the coordinator's outbound gRPC calls to the
+// catalog and workers.
 func (s *Server) Routes() http.Handler {
 	app := http.NewServeMux()
 	app.HandleFunc("POST /query", s.handleQuery)
@@ -70,6 +74,8 @@ func (s *Server) Routes() http.Handler {
 
 	top := http.NewServeMux()
 	top.Handle("/", authMiddleware(s.authSecret)(app))
+	top.HandleFunc("POST /auth/signup", s.handleSignup)
+	top.HandleFunc("POST /auth/login", s.handleLogin)
 	top.Handle("GET /metrics", promhttp.Handler())
 
 	return otelhttp.NewHandler(top, "coordinator")
@@ -93,12 +99,20 @@ type datasetQuery struct {
 	manifests  []*catalogpb.Manifest
 }
 
-// lookupDataset resolves name to its current snapshot and manifest list.
+// lookupDataset resolves name to its current snapshot and manifest list,
+// scoped to the caller's workspace (from the request's JWT claims — every
+// route this is reachable from requires one, see authMiddleware) so a
+// token can't resolve a dataset belonging to a different workspace.
 // Returns a plain error (never writes to the response) so /query can fold a
 // failure into the query_history row it already has in flight, while
 // /explain (which has no such row) can just write the error directly.
 func (s *Server) lookupDataset(ctx context.Context, name string) (*datasetQuery, error) {
-	ds, err := s.catalog.GetDataset(ctx, &catalogpb.GetDatasetRequest{Name: name})
+	var workspaceID string
+	if claims, ok := claimsFromContext(ctx); ok {
+		workspaceID = claims.WorkspaceID
+	}
+
+	ds, err := s.catalog.GetDataset(ctx, &catalogpb.GetDatasetRequest{Name: name, WorkspaceId: workspaceID})
 	if err != nil {
 		return nil, fmt.Errorf("looking up dataset %q: %w", name, err)
 	}
@@ -106,7 +120,7 @@ func (s *Server) lookupDataset(ctx context.Context, name string) (*datasetQuery,
 		return nil, fmt.Errorf("dataset %q has no committed snapshot yet — run ingest first", name)
 	}
 
-	snapshot, err := s.catalog.GetCurrentSnapshot(ctx, &catalogpb.GetSnapshotRequest{DatasetName: name})
+	snapshot, err := s.catalog.GetCurrentSnapshot(ctx, &catalogpb.GetSnapshotRequest{DatasetName: name, WorkspaceId: workspaceID})
 	if err != nil {
 		return nil, fmt.Errorf("fetching current snapshot: %w", err)
 	}
@@ -482,7 +496,11 @@ func (s *Server) handleCreateDataset(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	ds, err := s.catalog.CreateDataset(r.Context(), &catalogpb.CreateDatasetRequest{Name: req.Name, SchemaJson: req.SchemaJSON})
+	var workspaceID string
+	if claims, ok := claimsFromContext(r.Context()); ok {
+		workspaceID = claims.WorkspaceID
+	}
+	ds, err := s.catalog.CreateDataset(r.Context(), &catalogpb.CreateDatasetRequest{Name: req.Name, SchemaJson: req.SchemaJSON, WorkspaceId: workspaceID})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -491,7 +509,11 @@ func (s *Server) handleCreateDataset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListDatasets(w http.ResponseWriter, r *http.Request) {
-	resp, err := s.catalog.ListDatasets(r.Context(), &catalogpb.ListDatasetsRequest{})
+	var workspaceID string
+	if claims, ok := claimsFromContext(r.Context()); ok {
+		workspaceID = claims.WorkspaceID
+	}
+	resp, err := s.catalog.ListDatasets(r.Context(), &catalogpb.ListDatasetsRequest{WorkspaceId: workspaceID})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return

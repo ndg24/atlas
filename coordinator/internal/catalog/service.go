@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"atlas/coordinator/internal/auth"
 	pb "atlas/coordinator/internal/catalogpb"
 )
 
@@ -27,18 +28,22 @@ func NewService(pool *pgxpool.Pool) *Service {
 	return &Service{pool: pool}
 }
 
-const datasetColumns = `id::text, name, schema_json::text, coalesce(current_snapshot_id::text, ''), created_at::text`
+const datasetColumns = `id::text, name, schema_json::text, coalesce(current_snapshot_id::text, ''), created_at::text, workspace_id::text`
 
 func scanDataset(row pgx.Row) (*pb.Dataset, error) {
 	var ds pb.Dataset
-	err := row.Scan(&ds.Id, &ds.Name, &ds.SchemaJson, &ds.CurrentSnapshotId, &ds.CreatedAt)
+	err := row.Scan(&ds.Id, &ds.Name, &ds.SchemaJson, &ds.CurrentSnapshotId, &ds.CreatedAt, &ds.WorkspaceId)
 	return &ds, err
 }
 
 func (s *Service) CreateDataset(ctx context.Context, req *pb.CreateDatasetRequest) (*pb.Dataset, error) {
+	workspaceID := req.GetWorkspaceId()
+	if workspaceID == "" {
+		workspaceID = auth.DefaultWorkspaceID
+	}
 	ds, err := scanDataset(s.pool.QueryRow(ctx,
-		`INSERT INTO datasets (name, schema_json) VALUES ($1, $2) RETURNING `+datasetColumns,
-		req.GetName(), req.GetSchemaJson(),
+		`INSERT INTO datasets (name, schema_json, workspace_id) VALUES ($1, $2, $3) RETURNING `+datasetColumns,
+		req.GetName(), req.GetSchemaJson(), workspaceID,
 	))
 	if err != nil {
 		return nil, fmt.Errorf("creating dataset %q: %w", req.GetName(), err)
@@ -46,6 +51,13 @@ func (s *Service) CreateDataset(ctx context.Context, req *pb.CreateDatasetReques
 	return ds, nil
 }
 
+// GetDataset looks up a dataset by name. If req.WorkspaceId is set, the
+// lookup only succeeds when the dataset belongs to that workspace —
+// reported as NotFound on a mismatch (not a distinct "forbidden" error) so
+// a caller can't distinguish "wrong workspace" from "doesn't exist" and
+// enumerate dataset names across workspaces. An empty WorkspaceId applies
+// no filter, for callers (like atlas-cli's direct, unauthenticated ingest
+// path) that aren't scoping the lookup themselves.
 func (s *Service) GetDataset(ctx context.Context, req *pb.GetDatasetRequest) (*pb.Dataset, error) {
 	ds, err := scanDataset(s.pool.QueryRow(ctx,
 		`SELECT `+datasetColumns+` FROM datasets WHERE name = $1`, req.GetName(),
@@ -56,11 +68,23 @@ func (s *Service) GetDataset(ctx context.Context, req *pb.GetDatasetRequest) (*p
 	if err != nil {
 		return nil, fmt.Errorf("getting dataset %q: %w", req.GetName(), err)
 	}
+	if req.GetWorkspaceId() != "" && ds.WorkspaceId != req.GetWorkspaceId() {
+		return nil, status.Errorf(codes.NotFound, "dataset %q not found", req.GetName())
+	}
 	return ds, nil
 }
 
-func (s *Service) ListDatasets(ctx context.Context, _ *pb.ListDatasetsRequest) (*pb.ListDatasetsResponse, error) {
-	rows, err := s.pool.Query(ctx, `SELECT `+datasetColumns+` FROM datasets ORDER BY name`)
+// ListDatasets returns every dataset belonging to req.WorkspaceId, or every
+// dataset system-wide if it's empty (see GetDataset's doc comment for the
+// same empty-means-unfiltered convention).
+func (s *Service) ListDatasets(ctx context.Context, req *pb.ListDatasetsRequest) (*pb.ListDatasetsResponse, error) {
+	var rows pgx.Rows
+	var err error
+	if workspaceID := req.GetWorkspaceId(); workspaceID != "" {
+		rows, err = s.pool.Query(ctx, `SELECT `+datasetColumns+` FROM datasets WHERE workspace_id = $1 ORDER BY name`, workspaceID)
+	} else {
+		rows, err = s.pool.Query(ctx, `SELECT `+datasetColumns+` FROM datasets ORDER BY name`)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("listing datasets: %w", err)
 	}
@@ -138,21 +162,29 @@ func (s *Service) CommitSnapshot(ctx context.Context, req *pb.CommitSnapshotRequ
 	return &snap, nil
 }
 
+// GetCurrentSnapshot looks up a dataset's current snapshot by dataset name,
+// subject to the same empty-means-unfiltered workspace check GetDataset
+// applies (see its doc comment).
 func (s *Service) GetCurrentSnapshot(ctx context.Context, req *pb.GetSnapshotRequest) (*pb.Snapshot, error) {
 	var snap pb.Snapshot
+	var datasetWorkspaceID string
 	err := s.pool.QueryRow(ctx,
 		`SELECT s.id::text, s.dataset_id::text, coalesce(s.parent_snapshot_id::text, ''),
-		        s.manifest_list_path, s.operation, coalesce(s.summary_json::text, ''), s.created_at::text
+		        s.manifest_list_path, s.operation, coalesce(s.summary_json::text, ''), s.created_at::text,
+		        d.workspace_id::text
 		 FROM snapshots s JOIN datasets d ON d.current_snapshot_id = s.id
 		 WHERE d.name = $1`,
 		req.GetDatasetName(),
 	).Scan(&snap.Id, &snap.DatasetId, &snap.ParentSnapshotId, &snap.ManifestListPath,
-		&snap.Operation, &snap.SummaryJson, &snap.CreatedAt)
+		&snap.Operation, &snap.SummaryJson, &snap.CreatedAt, &datasetWorkspaceID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, status.Errorf(codes.NotFound, "dataset %q has no current snapshot", req.GetDatasetName())
 	}
 	if err != nil {
 		return nil, fmt.Errorf("getting current snapshot for dataset %q: %w", req.GetDatasetName(), err)
+	}
+	if req.GetWorkspaceId() != "" && datasetWorkspaceID != req.GetWorkspaceId() {
+		return nil, status.Errorf(codes.NotFound, "dataset %q has no current snapshot", req.GetDatasetName())
 	}
 	return &snap, nil
 }

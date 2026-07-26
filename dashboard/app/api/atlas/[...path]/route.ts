@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getAtlasToken } from "@/lib/auth-token";
 
 // Generic byte-transparent proxy to the coordinator: reconstructs the
 // coordinator path from the catch-all segments, injects the bearer token
@@ -12,13 +13,13 @@ import { NextRequest, NextResponse } from "next/server";
 // support: the browser only ever talks to this same-origin Next.js route.
 
 const COORDINATOR_URL = process.env.ATLAS_COORDINATOR_URL ?? "http://localhost:8080";
-const TOKEN = process.env.ATLAS_TOKEN;
 
 async function proxy(req: NextRequest, path: string[]) {
-  if (!TOKEN) {
+  const token = getAtlasToken(req);
+  if (!token) {
     return NextResponse.json(
-      { error: "ATLAS_TOKEN is not set on the dashboard server -- see dashboard/.env.local.example" },
-      { status: 500 },
+      { error: "not logged in, and ATLAS_TOKEN is not set on the dashboard server -- see dashboard/.env.local.example" },
+      { status: 401 },
     );
   }
 
@@ -30,7 +31,7 @@ async function proxy(req: NextRequest, path: string[]) {
   const upstream = await fetch(targetUrl, {
     method: req.method,
     headers: {
-      Authorization: `Bearer ${TOKEN}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
     body: hasBody ? await req.text() : undefined,

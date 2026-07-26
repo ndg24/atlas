@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { LogoutButton } from "@/components/logout-button";
 
 const LINKS = [
   { href: "/datasets", label: "Datasets" },
@@ -14,7 +15,7 @@ export function Nav() {
         <Link href="/datasets" className="font-semibold tracking-tight">
           Atlas
         </Link>
-        <nav className="flex gap-4 text-sm">
+        <nav className="flex flex-1 gap-4 text-sm">
           {LINKS.map((link) => (
             <Link
               key={link.href}
@@ -25,6 +26,7 @@ export function Nav() {
             </Link>
           ))}
         </nav>
+        <LogoutButton />
       </div>
     </header>
   );

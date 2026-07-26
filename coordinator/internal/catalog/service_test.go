@@ -8,12 +8,18 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"atlas/coordinator/internal/catalog"
 	pb "atlas/coordinator/internal/catalogpb"
 )
 
-func newTestService(t *testing.T) *catalog.Service {
+// newTestService returns a Service backed by a fresh, migrated Postgres
+// container, plus the raw pool — needed by tests (like the workspace-
+// scoping one below) that must set up state Service itself has no RPC for,
+// e.g. inserting a second workspace row.
+func newTestService(t *testing.T) (*catalog.Service, *pgxpool.Pool) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -46,12 +52,12 @@ func newTestService(t *testing.T) *catalog.Service {
 	}
 	t.Cleanup(pool.Close)
 
-	return catalog.NewService(pool)
+	return catalog.NewService(pool), pool
 }
 
 func TestCommitSnapshot_ChainsParentAcrossTwoCommits(t *testing.T) {
 	ctx := context.Background()
-	svc := newTestService(t)
+	svc, _ := newTestService(t)
 
 	ds, err := svc.CreateDataset(ctx, &pb.CreateDatasetRequest{
 		Name:       "patients",
@@ -128,7 +134,7 @@ func TestCommitSnapshot_ChainsParentAcrossTwoCommits(t *testing.T) {
 
 func TestCommitSnapshot_PreservesManifestFormat(t *testing.T) {
 	ctx := context.Background()
-	svc := newTestService(t)
+	svc, _ := newTestService(t)
 
 	ds, err := svc.CreateDataset(ctx, &pb.CreateDatasetRequest{
 		Name:       "patients",
@@ -192,5 +198,83 @@ func TestCommitSnapshot_PreservesManifestFormat(t *testing.T) {
 		if got := formatByPath[path]; got != wantFormat {
 			t.Fatalf("manifest %s format = %q, want %q", path, got, wantFormat)
 		}
+	}
+}
+
+// TestDatasetWorkspaceScoping_IsolatesAcrossWorkspaces proves the migration
+// 0009 groundwork is actually enforced: a dataset created in one workspace
+// is invisible (via GetDataset, GetCurrentSnapshot, and ListDatasets) to a
+// request scoped to a different workspace, and visible to one scoped to its
+// own workspace.
+func TestDatasetWorkspaceScoping_IsolatesAcrossWorkspaces(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newTestService(t)
+
+	const workspaceA = "00000000-0000-0000-0000-000000000001" // seeded default, see migration 0007
+	var workspaceB string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO workspaces (name) VALUES ('other') RETURNING id::text`,
+	).Scan(&workspaceB); err != nil {
+		t.Fatalf("creating second workspace: %v", err)
+	}
+
+	dsA, err := svc.CreateDataset(ctx, &pb.CreateDatasetRequest{
+		Name:        "patients_a",
+		SchemaJson:  `{"fields":[]}`,
+		WorkspaceId: workspaceA,
+	})
+	if err != nil {
+		t.Fatalf("CreateDataset (workspace A): %v", err)
+	}
+	if _, err := svc.CommitSnapshot(ctx, &pb.CommitSnapshotRequest{
+		DatasetId:        dsA.GetId(),
+		ManifestListPath: "data/patients_a",
+		Operation:        "append",
+		SummaryJson:      `{"row_count":1}`,
+		Manifests: []*pb.ManifestInput{{
+			FilePath:            "data/patients_a/part-0.atlas",
+			PartitionValuesJson: "{}",
+			RowCount:            1,
+			FileSizeBytes:       10,
+			ColumnStatsJson:     "{}",
+		}},
+	}); err != nil {
+		t.Fatalf("CommitSnapshot (workspace A): %v", err)
+	}
+
+	if _, err := svc.GetDataset(ctx, &pb.GetDatasetRequest{Name: "patients_a", WorkspaceId: workspaceB}); status.Code(err) != codes.NotFound {
+		t.Fatalf("GetDataset from workspace B: got err %v, want NotFound", err)
+	}
+	if _, err := svc.GetCurrentSnapshot(ctx, &pb.GetSnapshotRequest{DatasetName: "patients_a", WorkspaceId: workspaceB}); status.Code(err) != codes.NotFound {
+		t.Fatalf("GetCurrentSnapshot from workspace B: got err %v, want NotFound", err)
+	}
+	listB, err := svc.ListDatasets(ctx, &pb.ListDatasetsRequest{WorkspaceId: workspaceB})
+	if err != nil {
+		t.Fatalf("ListDatasets (workspace B): %v", err)
+	}
+	for _, ds := range listB.GetDatasets() {
+		if ds.GetName() == "patients_a" {
+			t.Fatalf("workspace B's dataset list leaked workspace A's dataset: %+v", listB.GetDatasets())
+		}
+	}
+
+	if _, err := svc.GetDataset(ctx, &pb.GetDatasetRequest{Name: "patients_a", WorkspaceId: workspaceA}); err != nil {
+		t.Fatalf("GetDataset from workspace A: %v", err)
+	}
+	if _, err := svc.GetCurrentSnapshot(ctx, &pb.GetSnapshotRequest{DatasetName: "patients_a", WorkspaceId: workspaceA}); err != nil {
+		t.Fatalf("GetCurrentSnapshot from workspace A: %v", err)
+	}
+	listA, err := svc.ListDatasets(ctx, &pb.ListDatasetsRequest{WorkspaceId: workspaceA})
+	if err != nil {
+		t.Fatalf("ListDatasets (workspace A): %v", err)
+	}
+	found := false
+	for _, ds := range listA.GetDatasets() {
+		if ds.GetName() == "patients_a" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("workspace A's dataset list should include patients_a: %+v", listA.GetDatasets())
 	}
 }

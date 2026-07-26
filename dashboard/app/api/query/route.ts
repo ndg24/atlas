@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { decodeArrowBatches } from "@/lib/arrow";
+import { getAtlasToken } from "@/lib/auth-token";
 import type { ApiError } from "@/lib/types";
 
 // Dedicated (not the generic [...path] proxy) because the response needs
@@ -7,20 +8,20 @@ import type { ApiError } from "@/lib/types";
 // keeps apache-arrow out of the client bundle entirely.
 
 const COORDINATOR_URL = process.env.ATLAS_COORDINATOR_URL ?? "http://localhost:8080";
-const TOKEN = process.env.ATLAS_TOKEN;
 
 export async function POST(req: NextRequest) {
-  if (!TOKEN) {
+  const token = getAtlasToken(req);
+  if (!token) {
     return NextResponse.json(
-      { error: "ATLAS_TOKEN is not set on the dashboard server -- see dashboard/.env.local.example" },
-      { status: 500 },
+      { error: "not logged in, and ATLAS_TOKEN is not set on the dashboard server -- see dashboard/.env.local.example" },
+      { status: 401 },
     );
   }
 
   const upstream = await fetch(new URL("query", COORDINATOR_URL), {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${TOKEN}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
     body: await req.text(),

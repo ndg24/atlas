@@ -137,7 +137,7 @@ func newInsightsTestServer(t *testing.T, catalog *fakeCatalog, workerAddr string
 	}
 	t.Cleanup(registry.Close)
 	coordinator := &scheduler.Coordinator{Registry: registry}
-	return api.NewServer(catalog, coordinator, ai, nil, nil, testSecret)
+	return api.NewServer(catalog, coordinator, ai, nil, nil, nil, testSecret)
 }
 
 func ageDatasetCatalog() *fakeCatalog {

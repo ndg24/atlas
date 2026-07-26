@@ -1,6 +1,7 @@
 //! Shared schema types for Atlas. Re-exports `arrow::datatypes` directly —
 //! there is no value in a parallel type system that just wraps Arrow's.
 
+mod delta;
 pub mod footer;
 #[cfg(test)]
 mod format_tests;
@@ -14,6 +15,7 @@ mod stats;
 mod writer;
 
 pub use arrow::datatypes::{DataType, Field, Schema};
+pub use delta::{read_delta_table, DeltaDataFile, DeltaTable};
 pub use footer::page_meta::Compression;
 pub use footer::{ColumnChunk, FileFooter, PageMeta, Statistics};
 pub use iceberg::{read_iceberg_table, IcebergDataFile, IcebergTable};

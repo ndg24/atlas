@@ -13,6 +13,12 @@ use catalog_pb::{CommitSnapshotRequest, CreateDatasetRequest, GetDatasetRequest,
 
 const DEFAULT_CATALOG_ADDR: &str = "http://127.0.0.1:9091";
 const DEFAULT_COORDINATOR_ADDR: &str = "http://127.0.0.1:8080";
+/// Mirrors the Go coordinator's `auth.DefaultWorkspaceID` — the single
+/// workspace seeded by `migrations/0007_workspaces_users.up.sql`. Ingest
+/// talks to the catalog directly over gRPC with no JWT, so it has no claims
+/// to read a workspace id from; this is the same default an unauthenticated
+/// caller effectively got before workspace scoping existed.
+const DEFAULT_WORKSPACE_ID: &str = "00000000-0000-0000-0000-000000000001";
 
 #[derive(Parser)]
 #[command(name = "atlas-cli")]
@@ -60,6 +66,11 @@ enum Command {
         /// File format to write: "atlas" (default) or "parquet".
         #[arg(long, default_value = "atlas")]
         format: String,
+        /// Workspace to create the dataset in (only used the first time a
+        /// dataset name is ingested; ignored on subsequent ingests into an
+        /// existing dataset).
+        #[arg(long, default_value = DEFAULT_WORKSPACE_ID)]
+        workspace_id: String,
     },
     /// Register an existing Iceberg table (created by another engine, e.g.
     /// Spark or PyIceberg) as an external-table dataset: no data is copied or
@@ -76,6 +87,26 @@ enum Command {
         dataset: String,
         #[arg(long, default_value = DEFAULT_CATALOG_ADDR)]
         catalog_addr: String,
+        /// Workspace to create the dataset in (see `ingest --workspace-id`).
+        #[arg(long, default_value = DEFAULT_WORKSPACE_ID)]
+        workspace_id: String,
+    },
+    /// Register an existing Delta Lake table (created by another engine,
+    /// e.g. Spark or the `deltalake` Python package) as an external-table
+    /// dataset: no data is copied or rewritten, only its current state's
+    /// data files + schema are recorded in the catalog, exactly as `ingest`
+    /// would for files Atlas wrote itself.
+    IngestDelta {
+        /// Path to the table's root directory (containing `_delta_log/`).
+        #[arg(long)]
+        table_path: PathBuf,
+        #[arg(long)]
+        dataset: String,
+        #[arg(long, default_value = DEFAULT_CATALOG_ADDR)]
+        catalog_addr: String,
+        /// Workspace to create the dataset in (see `ingest --workspace-id`).
+        #[arg(long, default_value = DEFAULT_WORKSPACE_ID)]
+        workspace_id: String,
     },
 }
 
@@ -102,12 +133,30 @@ async fn main() -> Result<()> {
             data_dir,
             catalog_addr,
             format,
-        } => run_ingest(&file, &dataset, &data_dir, &catalog_addr, &format).await,
+            workspace_id,
+        } => {
+            run_ingest(
+                &file,
+                &dataset,
+                &data_dir,
+                &catalog_addr,
+                &format,
+                &workspace_id,
+            )
+            .await
+        }
         Command::IngestIceberg {
             metadata,
             dataset,
             catalog_addr,
-        } => run_ingest_iceberg(&metadata, &dataset, &catalog_addr).await,
+            workspace_id,
+        } => run_ingest_iceberg(&metadata, &dataset, &catalog_addr, &workspace_id).await,
+        Command::IngestDelta {
+            table_path,
+            dataset,
+            catalog_addr,
+            workspace_id,
+        } => run_ingest_delta(&table_path, &dataset, &catalog_addr, &workspace_id).await,
     }
 }
 
@@ -200,6 +249,7 @@ async fn run_ingest(
     data_dir: &Path,
     catalog_addr: &str,
     format: &str,
+    workspace_id: &str,
 ) -> Result<()> {
     if format != "atlas" && format != "parquet" {
         bail!("unsupported format {format:?}, expected \"atlas\" or \"parquet\"");
@@ -233,7 +283,7 @@ async fn run_ingest(
 
     let mut client = connect(catalog_addr).await?;
     let schema_json = serde_json::to_string(&schema).context("serializing dataset schema")?;
-    let dataset_id = ensure_dataset(&mut client, dataset, &schema_json).await?;
+    let dataset_id = ensure_dataset(&mut client, dataset, &schema_json, workspace_id).await?;
 
     let column_stats_json = serde_json::to_string(&column_stats_by_name(&batches)?)
         .context("serializing column stats")?;
@@ -273,7 +323,12 @@ async fn run_ingest(
 /// Unlike `run_ingest`, no file is written — `atlas_format::read_iceberg_table`
 /// already resolved the table's own data files, so each becomes a manifest
 /// pointing directly at that existing Parquet file.
-async fn run_ingest_iceberg(metadata: &Path, dataset: &str, catalog_addr: &str) -> Result<()> {
+async fn run_ingest_iceberg(
+    metadata: &Path,
+    dataset: &str,
+    catalog_addr: &str,
+    workspace_id: &str,
+) -> Result<()> {
     let table = atlas_format::read_iceberg_table(metadata)?;
     if table.data_files.is_empty() {
         bail!(
@@ -284,7 +339,7 @@ async fn run_ingest_iceberg(metadata: &Path, dataset: &str, catalog_addr: &str) 
 
     let mut client = connect(catalog_addr).await?;
     let schema_json = serde_json::to_string(&table.schema).context("serializing iceberg schema")?;
-    let dataset_id = ensure_dataset(&mut client, dataset, &schema_json).await?;
+    let dataset_id = ensure_dataset(&mut client, dataset, &schema_json, workspace_id).await?;
 
     let mut total_rows: i64 = 0;
     let manifests = table
@@ -327,22 +382,90 @@ async fn run_ingest_iceberg(metadata: &Path, dataset: &str, catalog_addr: &str) 
     Ok(())
 }
 
+/// Register an external Delta table's current state into the catalog.
+/// Unlike `run_ingest`, no file is written — `atlas_format::read_delta_table`
+/// already resolved the table's own data files, so each becomes a manifest
+/// pointing directly at that existing Parquet file.
+async fn run_ingest_delta(
+    table_path: &Path,
+    dataset: &str,
+    catalog_addr: &str,
+    workspace_id: &str,
+) -> Result<()> {
+    let table = atlas_format::read_delta_table(table_path)?;
+    if table.data_files.is_empty() {
+        bail!(
+            "delta table at {} has no live data files",
+            table_path.display()
+        );
+    }
+
+    let mut client = connect(catalog_addr).await?;
+    let schema_json = serde_json::to_string(&table.schema).context("serializing delta schema")?;
+    let dataset_id = ensure_dataset(&mut client, dataset, &schema_json, workspace_id).await?;
+
+    let mut total_rows: i64 = 0;
+    let manifests = table
+        .data_files
+        .iter()
+        .map(|f| {
+            total_rows += f.row_count;
+            Ok(ManifestInput {
+                file_path: f.file_path.to_string_lossy().into_owned(),
+                partition_values_json: serde_json::to_string(&f.partition_values)
+                    .context("serializing delta partition values")?,
+                row_count: f.row_count,
+                file_size_bytes: f.file_size_bytes,
+                column_stats_json: serde_json::to_string(&f.column_stats)
+                    .context("serializing delta column stats")?,
+                format: "delta".to_string(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let file_count = manifests.len();
+
+    let summary_json =
+        serde_json::json!({ "row_count": total_rows, "file_count": file_count }).to_string();
+    let snapshot = client
+        .commit_snapshot(CommitSnapshotRequest {
+            dataset_id,
+            manifest_list_path: table_path.to_string_lossy().into_owned(),
+            operation: "append".to_string(),
+            summary_json,
+            manifests,
+        })
+        .await
+        .context("committing snapshot")?
+        .into_inner();
+
+    println!(
+        "registered delta table '{dataset}': {total_rows} rows across {file_count} files (snapshot {})",
+        snapshot.id
+    );
+    Ok(())
+}
+
 async fn connect(catalog_addr: &str) -> Result<CatalogServiceClient<tonic::transport::Channel>> {
     CatalogServiceClient::connect(catalog_addr.to_string())
         .await
         .with_context(|| format!("connecting to catalog at {catalog_addr}"))
 }
 
-/// Look up `dataset` in the catalog, creating it (with `schema_json`) on
-/// first ingest. Returns the dataset's id.
+/// Look up `dataset` in the catalog, creating it (with `schema_json`, in
+/// `workspace_id`) on first ingest. Returns the dataset's id. The lookup
+/// itself is unscoped by workspace (dataset names are globally unique, so
+/// there's at most one to find regardless); `workspace_id` only matters the
+/// moment the dataset doesn't exist yet and gets created.
 async fn ensure_dataset(
     client: &mut CatalogServiceClient<tonic::transport::Channel>,
     dataset: &str,
     schema_json: &str,
+    workspace_id: &str,
 ) -> Result<String> {
     match client
         .get_dataset(GetDatasetRequest {
             name: dataset.to_string(),
+            workspace_id: String::new(),
         })
         .await
     {
@@ -351,6 +474,7 @@ async fn ensure_dataset(
             .create_dataset(CreateDatasetRequest {
                 name: dataset.to_string(),
                 schema_json: schema_json.to_string(),
+                workspace_id: workspace_id.to_string(),
             })
             .await
             .context("creating dataset")?

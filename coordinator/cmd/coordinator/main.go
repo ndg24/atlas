@@ -21,6 +21,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"atlas/coordinator/internal/accounts"
 	"atlas/coordinator/internal/api"
 	aipb "atlas/coordinator/internal/aipb"
 	"atlas/coordinator/internal/cache"
@@ -99,6 +100,7 @@ func run() error {
 
 	coordinator := &scheduler.Coordinator{Registry: registry}
 	historyStore := history.NewStore(pool)
+	accountsStore := accounts.NewStore(pool)
 
 	// A Redis connectivity problem should never take the coordinator down —
 	// cache.Get/Set failures are swallowed by the API layer and treated as
@@ -110,7 +112,7 @@ func run() error {
 	}
 	defer resultCache.Close()
 
-	server := api.NewServer(catalogClient, coordinator, aiClient, historyStore, resultCache, []byte(jwtSecret))
+	server := api.NewServer(catalogClient, coordinator, aiClient, historyStore, accountsStore, resultCache, []byte(jwtSecret))
 
 	httpServer := &http.Server{Addr: listenAddr, Handler: server.Routes()}
 	go func() {

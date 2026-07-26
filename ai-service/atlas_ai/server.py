@@ -17,6 +17,7 @@ from .insights import narrate_findings, suggest_questions
 from .pb import ai_pb2, ai_pb2_grpc
 from .plan.planner import NLToPlanError, nl_to_plan
 from .providers.litellm_provider import LiteLLMProvider
+from .telemetry import init_metrics, init_tracer, span_from_grpc_context
 
 logger = logging.getLogger(__name__)
 
@@ -27,49 +28,56 @@ class AIServiceImpl(ai_pb2_grpc.AIServiceServicer):
         self._provider = LiteLLMProvider(config.llm_provider, config.llm_model)
 
     async def NLToQuery(self, request: ai_pb2.NLRequest, context: grpc.aio.ServicerContext) -> ai_pb2.NLResponse:
-        try:
-            plan_json, raw_output = nl_to_plan(request.question, request.schema_json, self._provider)
-            return ai_pb2.NLResponse(plan_json=plan_json, raw_llm_output=raw_output)
-        except NLToPlanError as exc:
-            return ai_pb2.NLResponse(error=str(exc))
+        with span_from_grpc_context(context, "NLToQuery"):
+            try:
+                plan_json, raw_output = nl_to_plan(request.question, request.schema_json, self._provider)
+                return ai_pb2.NLResponse(plan_json=plan_json, raw_llm_output=raw_output)
+            except NLToPlanError as exc:
+                return ai_pb2.NLResponse(error=str(exc))
 
     async def Explain(self, request: ai_pb2.ExplainRequest, context: grpc.aio.ServicerContext) -> ai_pb2.ExplainResponse:
-        explanation = narrate_result(request.question, request.result_arrow_ipc, self._provider)
-        return ai_pb2.ExplainResponse(explanation=explanation)
+        with span_from_grpc_context(context, "Explain"):
+            explanation = narrate_result(request.question, request.result_arrow_ipc, self._provider)
+            return ai_pb2.ExplainResponse(explanation=explanation)
 
     async def NarrateFindings(
         self, request: ai_pb2.NarrateFindingsRequest, context: grpc.aio.ServicerContext
     ) -> ai_pb2.NarrateFindingsResponse:
-        narrative = narrate_findings(request.findings_json, self._provider)
-        return ai_pb2.NarrateFindingsResponse(narrative=narrative)
+        with span_from_grpc_context(context, "NarrateFindings"):
+            narrative = narrate_findings(request.findings_json, self._provider)
+            return ai_pb2.NarrateFindingsResponse(narrative=narrative)
 
     async def SuggestQuestions(
         self, request: ai_pb2.SuggestQuestionsRequest, context: grpc.aio.ServicerContext
     ) -> ai_pb2.SuggestQuestionsResponse:
-        questions = suggest_questions(request.schema_json, request.summary_json, self._provider)
-        return ai_pb2.SuggestQuestionsResponse(questions=questions)
+        with span_from_grpc_context(context, "SuggestQuestions"):
+            questions = suggest_questions(request.schema_json, request.summary_json, self._provider)
+            return ai_pb2.SuggestQuestionsResponse(questions=questions)
 
     async def Research(
         self, request: ai_pb2.ResearchRequest, context: grpc.aio.ServicerContext
     ) -> ai_pb2.ResearchResponse:
-        try:
-            state = run_pipeline(
-                request.question,
-                request.dataset,
-                request.schema_json,
-                request.corpus_id,
-                self._config.coordinator_url,
-                request.auth_token,
-                self._provider,
-            )
-            return ai_pb2.ResearchResponse(report=state.report, state_json=state.model_dump_json())
-        except Exception as exc:
-            logger.exception("research pipeline failed for question %r", request.question)
-            return ai_pb2.ResearchResponse(error=str(exc))
+        with span_from_grpc_context(context, "Research"):
+            try:
+                state = run_pipeline(
+                    request.question,
+                    request.dataset,
+                    request.schema_json,
+                    request.corpus_id,
+                    self._config.coordinator_url,
+                    request.auth_token,
+                    self._provider,
+                )
+                return ai_pb2.ResearchResponse(report=state.report, state_json=state.model_dump_json())
+            except Exception as exc:
+                logger.exception("research pipeline failed for question %r", request.question)
+                return ai_pb2.ResearchResponse(error=str(exc))
 
 
 async def serve() -> None:
     config = Config.from_env()
+    init_tracer()
+    init_metrics()
     server = grpc.aio.server()
     ai_pb2_grpc.add_AIServiceServicer_to_server(AIServiceImpl(config), server)
     server.add_insecure_port(config.listen_addr)

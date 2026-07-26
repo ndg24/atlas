@@ -28,6 +28,7 @@ type Dataset struct {
 	SchemaJson        string                 `protobuf:"bytes,3,opt,name=schema_json,json=schemaJson,proto3" json:"schema_json,omitempty"`
 	CurrentSnapshotId string                 `protobuf:"bytes,4,opt,name=current_snapshot_id,json=currentSnapshotId,proto3" json:"current_snapshot_id,omitempty"` // empty if no snapshot committed yet
 	CreatedAt         string                 `protobuf:"bytes,5,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`                           // RFC3339
+	WorkspaceId       string                 `protobuf:"bytes,6,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -93,6 +94,13 @@ func (x *Dataset) GetCurrentSnapshotId() string {
 func (x *Dataset) GetCreatedAt() string {
 	if x != nil {
 		return x.CreatedAt
+	}
+	return ""
+}
+
+func (x *Dataset) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
 	}
 	return ""
 }
@@ -290,9 +298,12 @@ func (x *Manifest) GetFormat() string {
 }
 
 type CreateDatasetRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	SchemaJson    string                 `protobuf:"bytes,2,opt,name=schema_json,json=schemaJson,proto3" json:"schema_json,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Name       string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	SchemaJson string                 `protobuf:"bytes,2,opt,name=schema_json,json=schemaJson,proto3" json:"schema_json,omitempty"`
+	// Workspace the dataset is created in — defaults to the seeded default
+	// workspace if empty.
+	WorkspaceId   string `protobuf:"bytes,3,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -341,9 +352,20 @@ func (x *CreateDatasetRequest) GetSchemaJson() string {
 	return ""
 }
 
+func (x *CreateDatasetRequest) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return ""
+}
+
 type GetDatasetRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// If set, the lookup only succeeds when the dataset belongs to this
+	// workspace (NotFound otherwise, so a mismatch doesn't leak existence
+	// across workspaces); if empty, no workspace filter is applied.
+	WorkspaceId   string `protobuf:"bytes,2,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -385,8 +407,18 @@ func (x *GetDatasetRequest) GetName() string {
 	return ""
 }
 
+func (x *GetDatasetRequest) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return ""
+}
+
 type ListDatasetsRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// If set, only datasets belonging to this workspace are returned; if
+	// empty, every dataset is returned (no filter).
+	WorkspaceId   string `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -419,6 +451,13 @@ func (x *ListDatasetsRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ListDatasetsRequest.ProtoReflect.Descriptor instead.
 func (*ListDatasetsRequest) Descriptor() ([]byte, []int) {
 	return file_catalog_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ListDatasetsRequest) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return ""
 }
 
 type ListDatasetsResponse struct {
@@ -626,8 +665,10 @@ func (x *ManifestInput) GetFormat() string {
 }
 
 type GetSnapshotRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	DatasetName   string                 `protobuf:"bytes,1,opt,name=dataset_name,json=datasetName,proto3" json:"dataset_name,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	DatasetName string                 `protobuf:"bytes,1,opt,name=dataset_name,json=datasetName,proto3" json:"dataset_name,omitempty"`
+	// Same semantics as GetDatasetRequest.workspace_id.
+	WorkspaceId   string `protobuf:"bytes,2,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -665,6 +706,13 @@ func (*GetSnapshotRequest) Descriptor() ([]byte, []int) {
 func (x *GetSnapshotRequest) GetDatasetName() string {
 	if x != nil {
 		return x.DatasetName
+	}
+	return ""
+}
+
+func (x *GetSnapshotRequest) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
 	}
 	return ""
 }
@@ -761,7 +809,7 @@ var File_catalog_proto protoreflect.FileDescriptor
 
 const file_catalog_proto_rawDesc = "" +
 	"\n" +
-	"\rcatalog.proto\x12\ratlas.catalog\"\x9d\x01\n" +
+	"\rcatalog.proto\x12\ratlas.catalog\"\xc0\x01\n" +
 	"\aDataset\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1f\n" +
@@ -769,7 +817,8 @@ const file_catalog_proto_rawDesc = "" +
 	"schemaJson\x12.\n" +
 	"\x13current_snapshot_id\x18\x04 \x01(\tR\x11currentSnapshotId\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\x05 \x01(\tR\tcreatedAt\"\xf5\x01\n" +
+	"created_at\x18\x05 \x01(\tR\tcreatedAt\x12!\n" +
+	"\fworkspace_id\x18\x06 \x01(\tR\vworkspaceId\"\xf5\x01\n" +
 	"\bSnapshot\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -789,14 +838,17 @@ const file_catalog_proto_rawDesc = "" +
 	"\trow_count\x18\x05 \x01(\x03R\browCount\x12&\n" +
 	"\x0ffile_size_bytes\x18\x06 \x01(\x03R\rfileSizeBytes\x12*\n" +
 	"\x11column_stats_json\x18\a \x01(\tR\x0fcolumnStatsJson\x12\x16\n" +
-	"\x06format\x18\b \x01(\tR\x06format\"K\n" +
+	"\x06format\x18\b \x01(\tR\x06format\"n\n" +
 	"\x14CreateDatasetRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1f\n" +
 	"\vschema_json\x18\x02 \x01(\tR\n" +
-	"schemaJson\"'\n" +
+	"schemaJson\x12!\n" +
+	"\fworkspace_id\x18\x03 \x01(\tR\vworkspaceId\"J\n" +
 	"\x11GetDatasetRequest\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\"\x15\n" +
-	"\x13ListDatasetsRequest\"J\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
+	"\fworkspace_id\x18\x02 \x01(\tR\vworkspaceId\"8\n" +
+	"\x13ListDatasetsRequest\x12!\n" +
+	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\"J\n" +
 	"\x14ListDatasetsResponse\x122\n" +
 	"\bdatasets\x18\x01 \x03(\v2\x16.atlas.catalog.DatasetR\bdatasets\"\xe1\x01\n" +
 	"\x15CommitSnapshotRequest\x12\x1d\n" +
@@ -812,9 +864,10 @@ const file_catalog_proto_rawDesc = "" +
 	"\trow_count\x18\x03 \x01(\x03R\browCount\x12&\n" +
 	"\x0ffile_size_bytes\x18\x04 \x01(\x03R\rfileSizeBytes\x12*\n" +
 	"\x11column_stats_json\x18\x05 \x01(\tR\x0fcolumnStatsJson\x12\x16\n" +
-	"\x06format\x18\x06 \x01(\tR\x06format\"7\n" +
+	"\x06format\x18\x06 \x01(\tR\x06format\"Z\n" +
 	"\x12GetSnapshotRequest\x12!\n" +
-	"\fdataset_name\x18\x01 \x01(\tR\vdatasetName\"7\n" +
+	"\fdataset_name\x18\x01 \x01(\tR\vdatasetName\x12!\n" +
+	"\fworkspace_id\x18\x02 \x01(\tR\vworkspaceId\"7\n" +
 	"\x14ListManifestsRequest\x12\x1f\n" +
 	"\vsnapshot_id\x18\x01 \x01(\tR\n" +
 	"snapshotId\"N\n" +

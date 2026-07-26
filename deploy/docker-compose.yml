@@ -184,6 +184,7 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4317"
     ports:
       - "9092:9092"
+      - "9096:9096" # Prometheus metrics (atlas_ai/telemetry.py), scraped below
     depends_on:
       ollama:
         condition: service_started
@@ -192,12 +193,15 @@ services:
 
   # The dashboard (Next.js). Its server-side proxy (dashboard/app/api/atlas)
   # holds the bearer token and forwards to the coordinator -- the browser
-  # never sees ATLAS_TOKEN or talks to :8080 directly, which also
-  # sidesteps the coordinator having no CORS support.
+  # never sees a token or talks to :8080 directly, which also sidesteps the
+  # coordinator having no CORS support.
   #
-  # ATLAS_TOKEN must already be minted before `docker compose up`: tokengen
-  # only needs the shared JWT_SECRET value (not a running coordinator), so
-  # run it natively first --
+  # ATLAS_TOKEN is optional: sign up at http://localhost:3000/login (the
+  # dashboard's own POST /auth/signup proxy) once the stack is up, and its
+  # session cookie is all you need. Set ATLAS_TOKEN only if you want a
+  # token that isn't tied to a login session (e.g. hitting this dashboard's
+  # API routes from a script) -- tokengen only needs the shared JWT_SECRET
+  # value (not a running coordinator), so it can be minted natively first:
   #   JWT_SECRET=dev-insecure-secret-change-me go run ./coordinator/cmd/tokengen \
   #     -user-id dev-user -workspace-id 00000000-0000-0000-0000-000000000001 -ttl 24h
   # -- then `export ATLAS_TOKEN=<result>` before bringing this stack up. See
@@ -208,7 +212,7 @@ services:
       dockerfile: dashboard/Dockerfile
     environment:
       ATLAS_COORDINATOR_URL: "http://coordinator:8080"
-      ATLAS_TOKEN: "${ATLAS_TOKEN:?set ATLAS_TOKEN -- see dashboard/README.md}"
+      ATLAS_TOKEN: "${ATLAS_TOKEN:-}"
     ports:
       - "3000:3000"
     depends_on:

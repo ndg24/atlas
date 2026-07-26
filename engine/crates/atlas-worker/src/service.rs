@@ -8,9 +8,10 @@
 //! combine step handed back to whichever worker runs it — and `Heartbeat`
 //! reports liveness plus in-flight task count for the coordinator's worker
 //! registry. A file partition's `format` field (`""`/`"atlas"`, `"parquet"`,
-//! or `"iceberg"`) picks which `atlas_format` reader `run_task` calls —
-//! `"iceberg"` reads via `read_parquet` too, since an Iceberg manifest's data
-//! file is itself Parquet; only the catalog's provenance tag differs.
+//! `"iceberg"`, or `"delta"`) picks which `atlas_format` reader `run_task`
+//! calls — `"iceberg"` and `"delta"` both read via `read_parquet`, since an
+//! Iceberg or Delta manifest's data file is itself Parquet; only the
+//! catalog's provenance tag differs.
 
 use std::path::Path;
 use std::pin::Pin;
@@ -29,9 +30,8 @@ use crate::split::split_for_distribution;
 use crate::telemetry::span_from_metadata;
 use crate::worker_pb::worker_service_server::WorkerService;
 use crate::worker_pb::{
-    task_request::Source, AnalyzeRequest, AnalyzeResponse, CompileFromPlanRequest,
-    CompileRequest, CompileResponse, HeartbeatRequest, HeartbeatResponse, ResultBatch,
-    TaskRequest,
+    task_request::Source, AnalyzeRequest, AnalyzeResponse, CompileFromPlanRequest, CompileRequest,
+    CompileResponse, HeartbeatRequest, HeartbeatResponse, ResultBatch, TaskRequest,
 };
 
 #[derive(Default)]
@@ -116,10 +116,11 @@ fn run_task(req: TaskRequest) -> Result<Vec<RecordBatch>> {
                     atlas_format::read_atlas_file(Path::new(&f.file_path), columns.as_deref())
                         .with_context(|| format!("reading partition file {}", f.file_path))?
                 }
-                "parquet" | "iceberg" => {
-                    // An Iceberg-sourced manifest's file is a data file the
-                    // external table already wrote in Parquet — the same
-                    // reader as a native Parquet manifest applies unchanged.
+                "parquet" | "iceberg" | "delta" => {
+                    // An Iceberg- or Delta-sourced manifest's file is a data
+                    // file the external table already wrote in Parquet —
+                    // the same reader as a native Parquet manifest applies
+                    // unchanged.
                     atlas_format::read_parquet(Path::new(&f.file_path), columns.as_deref())
                         .with_context(|| {
                             format!("reading parquet partition file {}", f.file_path)
@@ -403,6 +404,56 @@ mod tests {
         assert_eq!(diagnosis.value(1), "cold");
     }
 
+    /// Mirrors `iceberg_tagged_manifest_reads_via_the_parquet_path` for
+    /// `format: "delta"` — a Delta-sourced manifest's data file is Parquet
+    /// too, so this proves the same dispatch arm handles it correctly.
+    #[test]
+    fn delta_tagged_manifest_reads_via_the_parquet_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data.parquet");
+        let schema = Schema::new(vec![
+            Field::new("diagnosis", DataType::Utf8, false),
+            Field::new("cost", DataType::Float64, false),
+        ]);
+        let batch = arrow::record_batch::RecordBatch::try_new(
+            std::sync::Arc::new(schema.clone()),
+            vec![
+                std::sync::Arc::new(arrow::array::StringArray::from(vec!["flu", "cold"])),
+                std::sync::Arc::new(arrow::array::Float64Array::from(vec![100.0, 50.0])),
+            ],
+        )
+        .unwrap();
+        atlas_format::write_parquet(&path, &[batch]).unwrap();
+
+        let compiled = compile_query(
+            "SELECT diagnosis, cost FROM t",
+            &serde_json::to_string(&schema).unwrap(),
+        )
+        .unwrap();
+
+        let result = run_task(TaskRequest {
+            task_id: "t".to_string(),
+            plan_json: compiled.partial_plan_json,
+            source: Some(Source::File(FileSource {
+                file_path: path.to_string_lossy().into_owned(),
+                columns: vec![],
+                format: "delta".to_string(),
+            })),
+        })
+        .unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].num_rows(), 2);
+        let diagnosis = result[0]
+            .column_by_name("diagnosis")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<arrow::array::StringArray>()
+            .unwrap();
+        assert_eq!(diagnosis.value(0), "flu");
+        assert_eq!(diagnosis.value(1), "cold");
+    }
+
     fn schema_json() -> String {
         let schema = Schema::new(vec![
             Field::new("diagnosis", DataType::Utf8, false),
@@ -470,7 +521,9 @@ mod tests {
     mod analyze_tests {
         use super::*;
         use arrow::array::{Float64Array, Int64Array, StringArray};
-        use arrow::datatypes::{DataType as ArrowDataType, Field as ArrowField, Schema as ArrowSchema};
+        use arrow::datatypes::{
+            DataType as ArrowDataType, Field as ArrowField, Schema as ArrowSchema,
+        };
         use atlas_insights::{DatasetSummary, MergedColumnStats, OutlierFinding, QualityFinding};
         use base64::engine::general_purpose::STANDARD as BASE64;
         use base64::Engine;

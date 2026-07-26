@@ -7,27 +7,37 @@ questions and reading the cited report, and reviewing query history.
 
 ## How it talks to the coordinator
 
-There's no login flow anywhere in Atlas yet, and the coordinator has no CORS
-support, so this app never calls the coordinator directly from the browser.
-Instead, server-side Next.js Route Handlers (`app/api/atlas/[...path]`,
-`app/api/query`, `app/api/query-nl`) hold a bearer token and proxy every
-request; the browser only ever talks to this same-origin app.
+The coordinator has no CORS support, so this app never calls it directly
+from the browser. Instead, server-side Next.js Route Handlers
+(`app/api/atlas/[...path]`, `app/api/query`, `app/api/query-nl`) hold a
+bearer token and proxy every request; the browser only ever talks to this
+same-origin app.
+
+The token itself comes from one of two places, cookie first:
+`app/api/auth/route.ts` proxies `/login` page submissions to the
+coordinator's `POST /auth/login` or `/auth/signup` and stores the returned
+JWT in an httpOnly session cookie (`lib/auth-token.ts`); if there's no
+cookie, every proxy route falls back to the static `ATLAS_TOKEN` env var,
+which is what a script, CI job, or anyone not going through `/login` uses
+instead. `middleware.ts` redirects to `/login` when neither is present.
 
 ## Running locally (native, not Docker)
 
 1. Start the rest of the stack (Postgres, MinIO, Redis, catalog, coordinator,
    workers) -- see the repo root README's "Getting Started".
-2. Mint a dev token (there's no login flow, so this is the only way to get
-   one):
-   ```
-   JWT_SECRET=<same secret the coordinator is running with> \
-     go run ./coordinator/cmd/tokengen -user-id dev-user \
-     -workspace-id 00000000-0000-0000-0000-000000000001 -ttl 24h
-   ```
-3. `cp .env.local.example .env.local` and fill in `ATLAS_TOKEN` with that
-   token (and `ATLAS_COORDINATOR_URL` if the coordinator isn't on the
-   default `localhost:8080`).
-4. `npm install && npm run dev` -- http://localhost:3000
+2. `cp .env.local.example .env.local` (leave `ATLAS_TOKEN` blank -- see
+   below) and fill in `ATLAS_COORDINATOR_URL` if the coordinator isn't on
+   the default `localhost:8080`.
+3. `npm install && npm run dev` -- http://localhost:3000, then sign up at
+   `/login`.
+
+`ATLAS_TOKEN` is only needed for scripts/CI that call this app's API routes
+without a browser session to hold a cookie. Mint one with:
+```
+JWT_SECRET=<same secret the coordinator is running with> \
+  go run ./coordinator/cmd/tokengen -user-id dev-user \
+  -workspace-id 00000000-0000-0000-0000-000000000001 -ttl 24h
+```
 
 ## Running via Docker Compose
 
