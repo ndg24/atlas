@@ -33,6 +33,19 @@ service AIService {
   // underlying nl_to_plan — every returned question is guaranteed
   // answerable, not just plausible-sounding.
   rpc SuggestQuestions(SuggestQuestionsRequest) returns (SuggestQuestionsResponse);
+  // Phase 8 (multi-agent research mode): runs the sequential Planner ->
+  // Execution -> Visualization -> Explanation -> Report pipeline
+  // (ai-service/atlas_ai/agents/pipeline.py) over a research question,
+  // decomposing it into sub-questions and answering the structured ones by
+  // calling back into the coordinator's own POST /query/nl (auth_token is
+  // the caller's original bearer token, forwarded verbatim) -- ai-service
+  // still never touches the catalog or workers directly, only ever sees
+  // results the coordinator already computed. Literature sub-questions are
+  // recognized but retrieval is stubbed to return no documents in this
+  // slice, so every claim in the returned report is tagged [data]; a
+  // future slice wiring in real pgvector retrieval will start producing
+  // [literature:doc_id]-tagged claims too, without changing this RPC shape.
+  rpc Research(ResearchRequest) returns (ResearchResponse);
 }
 
 message NLRequest {
@@ -83,4 +96,31 @@ message SuggestQuestionsResponse {
   // nl_to_plan. May be fewer than requested if some candidates didn't
   // validate.
   repeated string questions = 1;
+}
+
+message ResearchRequest {
+  string question = 1;
+  string dataset = 2;
+  string schema_json = 3;
+  // Reserved for future literature retrieval scoping; accepted but unused
+  // while retrieve() is stubbed to return no documents.
+  string corpus_id = 4;
+  // The caller's original bearer token, forwarded verbatim as
+  // "Authorization: Bearer <auth_token>" on ExecutionAgent's loopback call
+  // to the coordinator's own POST /query/nl.
+  string auth_token = 5;
+}
+
+message ResearchResponse {
+  // Final report text; every claim is tagged [data] (traceable to a
+  // structured query result) or [literature:doc_id] (traceable to a
+  // retrieved document) -- never left unattributed.
+  string report = 1;
+  // The full PipelineState, JSON-serialized -- sub-questions, per-question
+  // results, chart specs, explanation sentences -- for dashboard/debugging
+  // transparency, same spirit as /explain surfacing raw_llm_output.
+  string state_json = 2;
+  // Set (with report/state_json empty) if the pipeline raised -- mirrors
+  // NLResponse.error's in-band-error shape.
+  string error = 3;
 }

@@ -70,6 +70,11 @@ class AIServiceStub:
                 request_serializer=ai__pb2.SuggestQuestionsRequest.SerializeToString,
                 response_deserializer=ai__pb2.SuggestQuestionsResponse.FromString,
                 _registered_method=True)
+        self.Research = channel.unary_unary(
+                '/atlas.ai.AIService/Research',
+                request_serializer=ai__pb2.ResearchRequest.SerializeToString,
+                response_deserializer=ai__pb2.ResearchResponse.FromString,
+                _registered_method=True)
 
 
 class AIServiceServicer:
@@ -124,6 +129,24 @@ class AIServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Research(self, request, context):
+        """Phase 8 (multi-agent research mode): runs the sequential Planner ->
+        Execution -> Visualization -> Explanation -> Report pipeline
+        (ai-service/atlas_ai/agents/pipeline.py) over a research question,
+        decomposing it into sub-questions and answering the structured ones by
+        calling back into the coordinator's own POST /query/nl (auth_token is
+        the caller's original bearer token, forwarded verbatim) -- ai-service
+        still never touches the catalog or workers directly, only ever sees
+        results the coordinator already computed. Literature sub-questions are
+        recognized but retrieval is stubbed to return no documents in this
+        slice, so every claim in the returned report is tagged [data]; a
+        future slice wiring in real pgvector retrieval will start producing
+        [literature:doc_id]-tagged claims too, without changing this RPC shape.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_AIServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -146,6 +169,11 @@ def add_AIServiceServicer_to_server(servicer, server):
                     servicer.SuggestQuestions,
                     request_deserializer=ai__pb2.SuggestQuestionsRequest.FromString,
                     response_serializer=ai__pb2.SuggestQuestionsResponse.SerializeToString,
+            ),
+            'Research': grpc.unary_unary_rpc_method_handler(
+                    servicer.Research,
+                    request_deserializer=ai__pb2.ResearchRequest.FromString,
+                    response_serializer=ai__pb2.ResearchResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -272,6 +300,33 @@ class AIService:
             '/atlas.ai.AIService/SuggestQuestions',
             ai__pb2.SuggestQuestionsRequest.SerializeToString,
             ai__pb2.SuggestQuestionsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Research(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/atlas.ai.AIService/Research',
+            ai__pb2.ResearchRequest.SerializeToString,
+            ai__pb2.ResearchResponse.FromString,
             options,
             channel_credentials,
             insecure,

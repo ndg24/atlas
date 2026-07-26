@@ -6,9 +6,28 @@ ATLAS_AI_INTEGRATION-gated tests).
 
 from __future__ import annotations
 
+import base64
+import io
 import json
 
+import pyarrow as pa
+import pyarrow.ipc as ipc
+
 from atlas_ai.providers.base import ModelProvider
+
+
+def encode_ipc_batch(columns: dict) -> str:
+    """Builds one self-contained Arrow IPC stream from `columns` (e.g.
+    {"hospital": ["General", "City"], "n": [10, 5]}) and returns it
+    base64-encoded, matching the shape /query/nl's arrow_ipc_batches carries
+    (coordinator/internal/api/server.go's encodeBatches) -- used by agent
+    tests that stand in for a coordinator response without a real HTTP call.
+    """
+    table = pa.table(columns)
+    buf = io.BytesIO()
+    with ipc.new_stream(buf, table.schema) as writer:
+        writer.write_table(table)
+    return base64.b64encode(buf.getvalue()).decode()
 
 
 class MockProvider(ModelProvider):

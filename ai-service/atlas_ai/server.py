@@ -10,6 +10,7 @@ import logging
 
 import grpc
 
+from .agents.pipeline import run_pipeline
 from .config import Config
 from .explain import narrate_result
 from .insights import narrate_findings, suggest_questions
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 class AIServiceImpl(ai_pb2_grpc.AIServiceServicer):
     def __init__(self, config: Config):
+        self._config = config
         self._provider = LiteLLMProvider(config.llm_provider, config.llm_model)
 
     async def NLToQuery(self, request: ai_pb2.NLRequest, context: grpc.aio.ServicerContext) -> ai_pb2.NLResponse:
@@ -46,6 +48,24 @@ class AIServiceImpl(ai_pb2_grpc.AIServiceServicer):
     ) -> ai_pb2.SuggestQuestionsResponse:
         questions = suggest_questions(request.schema_json, request.summary_json, self._provider)
         return ai_pb2.SuggestQuestionsResponse(questions=questions)
+
+    async def Research(
+        self, request: ai_pb2.ResearchRequest, context: grpc.aio.ServicerContext
+    ) -> ai_pb2.ResearchResponse:
+        try:
+            state = run_pipeline(
+                request.question,
+                request.dataset,
+                request.schema_json,
+                request.corpus_id,
+                self._config.coordinator_url,
+                request.auth_token,
+                self._provider,
+            )
+            return ai_pb2.ResearchResponse(report=state.report, state_json=state.model_dump_json())
+        except Exception as exc:
+            logger.exception("research pipeline failed for question %r", request.question)
+            return ai_pb2.ResearchResponse(error=str(exc))
 
 
 async def serve() -> None:

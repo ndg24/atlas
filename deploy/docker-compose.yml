@@ -160,6 +160,13 @@ services:
       ATLAS_LLM_MODEL: "llama3"
       OLLAMA_API_BASE: "http://ollama:11434"
       AI_SERVICE_ADDR: "0.0.0.0:9092"
+      # Phase 8's ExecutionAgent calls back into the coordinator's own
+      # POST /query/nl for each structured research sub-question -- no
+      # depends_on the other direction needed (the call only happens
+      # per-request, well after both containers are up, and coordinator
+      # already depends_on ai-service, so a reverse depends_on here would
+      # be a cycle).
+      COORDINATOR_URL: "http://coordinator:8080"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4317"
     ports:
       - "9092:9092"

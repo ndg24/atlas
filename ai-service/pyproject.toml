@@ -8,6 +8,8 @@ dependencies = [
     "grpcio>=1.66",
     "protobuf>=5.28",
     "pyarrow>=17.0",
+    "pydantic>=2.9",
+    "httpx>=0.27",
 ]
 
 [dependency-groups]

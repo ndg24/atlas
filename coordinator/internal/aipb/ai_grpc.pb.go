@@ -23,6 +23,7 @@ const (
 	AIService_Explain_FullMethodName          = "/atlas.ai.AIService/Explain"
 	AIService_NarrateFindings_FullMethodName  = "/atlas.ai.AIService/NarrateFindings"
 	AIService_SuggestQuestions_FullMethodName = "/atlas.ai.AIService/SuggestQuestions"
+	AIService_Research_FullMethodName         = "/atlas.ai.AIService/Research"
 )
 
 // AIServiceClient is the client API for AIService service.
@@ -42,6 +43,19 @@ type AIServiceClient interface {
 	// underlying nl_to_plan — every returned question is guaranteed
 	// answerable, not just plausible-sounding.
 	SuggestQuestions(ctx context.Context, in *SuggestQuestionsRequest, opts ...grpc.CallOption) (*SuggestQuestionsResponse, error)
+	// Phase 8 (multi-agent research mode): runs the sequential Planner ->
+	// Execution -> Visualization -> Explanation -> Report pipeline
+	// (ai-service/atlas_ai/agents/pipeline.py) over a research question,
+	// decomposing it into sub-questions and answering the structured ones by
+	// calling back into the coordinator's own POST /query/nl (auth_token is
+	// the caller's original bearer token, forwarded verbatim) -- ai-service
+	// still never touches the catalog or workers directly, only ever sees
+	// results the coordinator already computed. Literature sub-questions are
+	// recognized but retrieval is stubbed to return no documents in this
+	// slice, so every claim in the returned report is tagged [data]; a
+	// future slice wiring in real pgvector retrieval will start producing
+	// [literature:doc_id]-tagged claims too, without changing this RPC shape.
+	Research(ctx context.Context, in *ResearchRequest, opts ...grpc.CallOption) (*ResearchResponse, error)
 }
 
 type aIServiceClient struct {
@@ -92,6 +106,16 @@ func (c *aIServiceClient) SuggestQuestions(ctx context.Context, in *SuggestQuest
 	return out, nil
 }
 
+func (c *aIServiceClient) Research(ctx context.Context, in *ResearchRequest, opts ...grpc.CallOption) (*ResearchResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResearchResponse)
+	err := c.cc.Invoke(ctx, AIService_Research_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AIServiceServer is the server API for AIService service.
 // All implementations must embed UnimplementedAIServiceServer
 // for forward compatibility.
@@ -109,6 +133,19 @@ type AIServiceServer interface {
 	// underlying nl_to_plan — every returned question is guaranteed
 	// answerable, not just plausible-sounding.
 	SuggestQuestions(context.Context, *SuggestQuestionsRequest) (*SuggestQuestionsResponse, error)
+	// Phase 8 (multi-agent research mode): runs the sequential Planner ->
+	// Execution -> Visualization -> Explanation -> Report pipeline
+	// (ai-service/atlas_ai/agents/pipeline.py) over a research question,
+	// decomposing it into sub-questions and answering the structured ones by
+	// calling back into the coordinator's own POST /query/nl (auth_token is
+	// the caller's original bearer token, forwarded verbatim) -- ai-service
+	// still never touches the catalog or workers directly, only ever sees
+	// results the coordinator already computed. Literature sub-questions are
+	// recognized but retrieval is stubbed to return no documents in this
+	// slice, so every claim in the returned report is tagged [data]; a
+	// future slice wiring in real pgvector retrieval will start producing
+	// [literature:doc_id]-tagged claims too, without changing this RPC shape.
+	Research(context.Context, *ResearchRequest) (*ResearchResponse, error)
 	mustEmbedUnimplementedAIServiceServer()
 }
 
@@ -130,6 +167,9 @@ func (UnimplementedAIServiceServer) NarrateFindings(context.Context, *NarrateFin
 }
 func (UnimplementedAIServiceServer) SuggestQuestions(context.Context, *SuggestQuestionsRequest) (*SuggestQuestionsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SuggestQuestions not implemented")
+}
+func (UnimplementedAIServiceServer) Research(context.Context, *ResearchRequest) (*ResearchResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Research not implemented")
 }
 func (UnimplementedAIServiceServer) mustEmbedUnimplementedAIServiceServer() {}
 func (UnimplementedAIServiceServer) testEmbeddedByValue()                   {}
@@ -224,6 +264,24 @@ func _AIService_SuggestQuestions_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AIService_Research_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResearchRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AIServiceServer).Research(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AIService_Research_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AIServiceServer).Research(ctx, req.(*ResearchRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AIService_ServiceDesc is the grpc.ServiceDesc for AIService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -246,6 +304,10 @@ var AIService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SuggestQuestions",
 			Handler:    _AIService_SuggestQuestions_Handler,
+		},
+		{
+			MethodName: "Research",
+			Handler:    _AIService_Research_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

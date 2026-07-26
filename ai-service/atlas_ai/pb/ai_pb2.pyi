@@ -65,3 +65,27 @@ class SuggestQuestionsResponse(_message.Message):
     QUESTIONS_FIELD_NUMBER: _ClassVar[int]
     questions: _containers.RepeatedScalarFieldContainer[str]
     def __init__(self, questions: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class ResearchRequest(_message.Message):
+    __slots__ = ("question", "dataset", "schema_json", "corpus_id", "auth_token")
+    QUESTION_FIELD_NUMBER: _ClassVar[int]
+    DATASET_FIELD_NUMBER: _ClassVar[int]
+    SCHEMA_JSON_FIELD_NUMBER: _ClassVar[int]
+    CORPUS_ID_FIELD_NUMBER: _ClassVar[int]
+    AUTH_TOKEN_FIELD_NUMBER: _ClassVar[int]
+    question: str
+    dataset: str
+    schema_json: str
+    corpus_id: str
+    auth_token: str
+    def __init__(self, question: _Optional[str] = ..., dataset: _Optional[str] = ..., schema_json: _Optional[str] = ..., corpus_id: _Optional[str] = ..., auth_token: _Optional[str] = ...) -> None: ...
+
+class ResearchResponse(_message.Message):
+    __slots__ = ("report", "state_json", "error")
+    REPORT_FIELD_NUMBER: _ClassVar[int]
+    STATE_JSON_FIELD_NUMBER: _ClassVar[int]
+    ERROR_FIELD_NUMBER: _ClassVar[int]
+    report: str
+    state_json: str
+    error: str
+    def __init__(self, report: _Optional[str] = ..., state_json: _Optional[str] = ..., error: _Optional[str] = ...) -> None: ...

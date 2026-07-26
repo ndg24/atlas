@@ -65,6 +65,7 @@ func (s *Server) Routes() http.Handler {
 	app.HandleFunc("GET /datasets", s.handleListDatasets)
 	app.HandleFunc("POST /datasets/{name}/summary", s.handleSummary)
 	app.HandleFunc("POST /datasets/{name}/insights", s.handleInsights)
+	app.HandleFunc("POST /research", s.handleResearch)
 	app.HandleFunc("GET /history", s.handleHistory)
 
 	top := http.NewServeMux()

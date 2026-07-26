@@ -433,6 +433,155 @@ func (x *SuggestQuestionsResponse) GetQuestions() []string {
 	return nil
 }
 
+type ResearchRequest struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Question   string                 `protobuf:"bytes,1,opt,name=question,proto3" json:"question,omitempty"`
+	Dataset    string                 `protobuf:"bytes,2,opt,name=dataset,proto3" json:"dataset,omitempty"`
+	SchemaJson string                 `protobuf:"bytes,3,opt,name=schema_json,json=schemaJson,proto3" json:"schema_json,omitempty"`
+	// Reserved for future literature retrieval scoping; accepted but unused
+	// while retrieve() is stubbed to return no documents.
+	CorpusId string `protobuf:"bytes,4,opt,name=corpus_id,json=corpusId,proto3" json:"corpus_id,omitempty"`
+	// The caller's original bearer token, forwarded verbatim as
+	// "Authorization: Bearer <auth_token>" on ExecutionAgent's loopback call
+	// to the coordinator's own POST /query/nl.
+	AuthToken     string `protobuf:"bytes,5,opt,name=auth_token,json=authToken,proto3" json:"auth_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResearchRequest) Reset() {
+	*x = ResearchRequest{}
+	mi := &file_ai_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResearchRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResearchRequest) ProtoMessage() {}
+
+func (x *ResearchRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResearchRequest.ProtoReflect.Descriptor instead.
+func (*ResearchRequest) Descriptor() ([]byte, []int) {
+	return file_ai_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *ResearchRequest) GetQuestion() string {
+	if x != nil {
+		return x.Question
+	}
+	return ""
+}
+
+func (x *ResearchRequest) GetDataset() string {
+	if x != nil {
+		return x.Dataset
+	}
+	return ""
+}
+
+func (x *ResearchRequest) GetSchemaJson() string {
+	if x != nil {
+		return x.SchemaJson
+	}
+	return ""
+}
+
+func (x *ResearchRequest) GetCorpusId() string {
+	if x != nil {
+		return x.CorpusId
+	}
+	return ""
+}
+
+func (x *ResearchRequest) GetAuthToken() string {
+	if x != nil {
+		return x.AuthToken
+	}
+	return ""
+}
+
+type ResearchResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Final report text; every claim is tagged [data] (traceable to a
+	// structured query result) or [literature:doc_id] (traceable to a
+	// retrieved document) -- never left unattributed.
+	Report string `protobuf:"bytes,1,opt,name=report,proto3" json:"report,omitempty"`
+	// The full PipelineState, JSON-serialized -- sub-questions, per-question
+	// results, chart specs, explanation sentences -- for dashboard/debugging
+	// transparency, same spirit as /explain surfacing raw_llm_output.
+	StateJson string `protobuf:"bytes,2,opt,name=state_json,json=stateJson,proto3" json:"state_json,omitempty"`
+	// Set (with report/state_json empty) if the pipeline raised -- mirrors
+	// NLResponse.error's in-band-error shape.
+	Error         string `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResearchResponse) Reset() {
+	*x = ResearchResponse{}
+	mi := &file_ai_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResearchResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResearchResponse) ProtoMessage() {}
+
+func (x *ResearchResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_ai_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResearchResponse.ProtoReflect.Descriptor instead.
+func (*ResearchResponse) Descriptor() ([]byte, []int) {
+	return file_ai_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ResearchResponse) GetReport() string {
+	if x != nil {
+		return x.Report
+	}
+	return ""
+}
+
+func (x *ResearchResponse) GetStateJson() string {
+	if x != nil {
+		return x.StateJson
+	}
+	return ""
+}
+
+func (x *ResearchResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 var File_ai_proto protoreflect.FileDescriptor
 
 const file_ai_proto_rawDesc = "" +
@@ -462,12 +611,26 @@ const file_ai_proto_rawDesc = "" +
 	"schemaJson\x12!\n" +
 	"\fsummary_json\x18\x02 \x01(\tR\vsummaryJson\"8\n" +
 	"\x18SuggestQuestionsResponse\x12\x1c\n" +
-	"\tquestions\x18\x01 \x03(\tR\tquestions2\xb6\x02\n" +
+	"\tquestions\x18\x01 \x03(\tR\tquestions\"\xa4\x01\n" +
+	"\x0fResearchRequest\x12\x1a\n" +
+	"\bquestion\x18\x01 \x01(\tR\bquestion\x12\x18\n" +
+	"\adataset\x18\x02 \x01(\tR\adataset\x12\x1f\n" +
+	"\vschema_json\x18\x03 \x01(\tR\n" +
+	"schemaJson\x12\x1b\n" +
+	"\tcorpus_id\x18\x04 \x01(\tR\bcorpusId\x12\x1d\n" +
+	"\n" +
+	"auth_token\x18\x05 \x01(\tR\tauthToken\"_\n" +
+	"\x10ResearchResponse\x12\x16\n" +
+	"\x06report\x18\x01 \x01(\tR\x06report\x12\x1d\n" +
+	"\n" +
+	"state_json\x18\x02 \x01(\tR\tstateJson\x12\x14\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error2\xf9\x02\n" +
 	"\tAIService\x126\n" +
 	"\tNLToQuery\x12\x13.atlas.ai.NLRequest\x1a\x14.atlas.ai.NLResponse\x12>\n" +
 	"\aExplain\x12\x18.atlas.ai.ExplainRequest\x1a\x19.atlas.ai.ExplainResponse\x12V\n" +
 	"\x0fNarrateFindings\x12 .atlas.ai.NarrateFindingsRequest\x1a!.atlas.ai.NarrateFindingsResponse\x12Y\n" +
-	"\x10SuggestQuestions\x12!.atlas.ai.SuggestQuestionsRequest\x1a\".atlas.ai.SuggestQuestionsResponseB&Z$atlas/coordinator/internal/aipb;aipbb\x06proto3"
+	"\x10SuggestQuestions\x12!.atlas.ai.SuggestQuestionsRequest\x1a\".atlas.ai.SuggestQuestionsResponse\x12A\n" +
+	"\bResearch\x12\x19.atlas.ai.ResearchRequest\x1a\x1a.atlas.ai.ResearchResponseB&Z$atlas/coordinator/internal/aipb;aipbb\x06proto3"
 
 var (
 	file_ai_proto_rawDescOnce sync.Once
@@ -481,7 +644,7 @@ func file_ai_proto_rawDescGZIP() []byte {
 	return file_ai_proto_rawDescData
 }
 
-var file_ai_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_ai_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_ai_proto_goTypes = []any{
 	(*NLRequest)(nil),                // 0: atlas.ai.NLRequest
 	(*NLResponse)(nil),               // 1: atlas.ai.NLResponse
@@ -491,18 +654,22 @@ var file_ai_proto_goTypes = []any{
 	(*NarrateFindingsResponse)(nil),  // 5: atlas.ai.NarrateFindingsResponse
 	(*SuggestQuestionsRequest)(nil),  // 6: atlas.ai.SuggestQuestionsRequest
 	(*SuggestQuestionsResponse)(nil), // 7: atlas.ai.SuggestQuestionsResponse
+	(*ResearchRequest)(nil),          // 8: atlas.ai.ResearchRequest
+	(*ResearchResponse)(nil),         // 9: atlas.ai.ResearchResponse
 }
 var file_ai_proto_depIdxs = []int32{
 	0, // 0: atlas.ai.AIService.NLToQuery:input_type -> atlas.ai.NLRequest
 	2, // 1: atlas.ai.AIService.Explain:input_type -> atlas.ai.ExplainRequest
 	4, // 2: atlas.ai.AIService.NarrateFindings:input_type -> atlas.ai.NarrateFindingsRequest
 	6, // 3: atlas.ai.AIService.SuggestQuestions:input_type -> atlas.ai.SuggestQuestionsRequest
-	1, // 4: atlas.ai.AIService.NLToQuery:output_type -> atlas.ai.NLResponse
-	3, // 5: atlas.ai.AIService.Explain:output_type -> atlas.ai.ExplainResponse
-	5, // 6: atlas.ai.AIService.NarrateFindings:output_type -> atlas.ai.NarrateFindingsResponse
-	7, // 7: atlas.ai.AIService.SuggestQuestions:output_type -> atlas.ai.SuggestQuestionsResponse
-	4, // [4:8] is the sub-list for method output_type
-	0, // [0:4] is the sub-list for method input_type
+	8, // 4: atlas.ai.AIService.Research:input_type -> atlas.ai.ResearchRequest
+	1, // 5: atlas.ai.AIService.NLToQuery:output_type -> atlas.ai.NLResponse
+	3, // 6: atlas.ai.AIService.Explain:output_type -> atlas.ai.ExplainResponse
+	5, // 7: atlas.ai.AIService.NarrateFindings:output_type -> atlas.ai.NarrateFindingsResponse
+	7, // 8: atlas.ai.AIService.SuggestQuestions:output_type -> atlas.ai.SuggestQuestionsResponse
+	9, // 9: atlas.ai.AIService.Research:output_type -> atlas.ai.ResearchResponse
+	5, // [5:10] is the sub-list for method output_type
+	0, // [0:5] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -519,7 +686,7 @@ func file_ai_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ai_proto_rawDesc), len(file_ai_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
