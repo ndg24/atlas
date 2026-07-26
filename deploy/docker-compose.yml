@@ -190,6 +190,30 @@ services:
       postgres:
         condition: service_healthy
 
+  # The dashboard (Next.js). Its server-side proxy (dashboard/app/api/atlas)
+  # holds the bearer token and forwards to the coordinator -- the browser
+  # never sees ATLAS_TOKEN or talks to :8080 directly, which also
+  # sidesteps the coordinator having no CORS support.
+  #
+  # ATLAS_TOKEN must already be minted before `docker compose up`: tokengen
+  # only needs the shared JWT_SECRET value (not a running coordinator), so
+  # run it natively first --
+  #   JWT_SECRET=dev-insecure-secret-change-me go run ./coordinator/cmd/tokengen \
+  #     -user-id dev-user -workspace-id 00000000-0000-0000-0000-000000000001 -ttl 24h
+  # -- then `export ATLAS_TOKEN=<result>` before bringing this stack up. See
+  # dashboard/README.md for the full sequence.
+  dashboard:
+    build:
+      context: ..
+      dockerfile: dashboard/Dockerfile
+    environment:
+      ATLAS_COORDINATOR_URL: "http://coordinator:8080"
+      ATLAS_TOKEN: "${ATLAS_TOKEN:?set ATLAS_TOKEN -- see dashboard/README.md}"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - coordinator
+
   # Trace visualization for the OTel spans coordinator/catalog/workers emit
   # once OTEL_EXPORTER_OTLP_ENDPOINT is set (it is, above, pointed at this
   # service) — a query's trace id can be searched for here to see the
