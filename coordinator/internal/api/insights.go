@@ -98,6 +98,168 @@ func buildMergedColumnStats(fields []schemaField, manifests []*catalogpb.Manifes
 	return out
 }
 
+// columnStat mirrors one entry of atlas_insights::ColumnSummary (the
+// per-column shape buildSummary's Analyze call returns as summaryJSON's
+// "columns" array, and handleInsights already threads through unparsed as
+// columnsJSON) — enough to heuristically pick group/value/time columns for
+// outlier and trend detection without a second round-trip to the engine.
+type columnStat struct {
+	Name                  string  `json:"name"`
+	DataType              string  `json:"data_type"`
+	NullRate              float64 `json:"null_rate"`
+	DistinctCountEstimate uint64  `json:"distinct_count_estimate"`
+	Min                   *string `json:"min"`
+	Max                   *string `json:"max"`
+}
+
+const (
+	minGroupCardinality = 2
+	maxGroupCardinality = 50
+	maxPickNullRate     = 0.5
+)
+
+// pickGroupColumn picks a string column shaped like a grouping key: a
+// handful of distinct values (atlas_insights's DistinctCountEstimate,
+// already computed from manifest stats), not mostly null. Among qualifying
+// columns, the lowest cardinality is preferred (the more "categorical" one),
+// tie-broken by name for determinism. Returns ok=false if nothing qualifies
+// — outlier detection is then skipped for this dataset rather than guessing.
+func pickGroupColumn(columns []columnStat) (string, bool) {
+	var best *columnStat
+	for i := range columns {
+		c := &columns[i]
+		if c.DataType != "Utf8" || c.NullRate >= maxPickNullRate {
+			continue
+		}
+		if c.DistinctCountEstimate < minGroupCardinality || c.DistinctCountEstimate > maxGroupCardinality {
+			continue
+		}
+		if best == nil || c.DistinctCountEstimate < best.DistinctCountEstimate ||
+			(c.DistinctCountEstimate == best.DistinctCountEstimate && c.Name < best.Name) {
+			best = c
+		}
+	}
+	if best == nil {
+		return "", false
+	}
+	return best.Name, true
+}
+
+// pickValueColumn picks a numeric column to aggregate: not all-null, and not
+// zero-variance (min == max, already known from manifest stats without
+// running anything) — an aggregate over a constant column can never produce
+// an outlier or a trend. Lowest name wins ties, for determinism.
+func pickValueColumn(columns []columnStat) (string, bool) {
+	var best *columnStat
+	for i := range columns {
+		c := &columns[i]
+		if c.DataType != "Int64" && c.DataType != "Float64" {
+			continue
+		}
+		if c.NullRate >= 1.0 {
+			continue
+		}
+		if c.Min != nil && c.Max != nil && *c.Min == *c.Max {
+			continue
+		}
+		if best == nil || c.Name < best.Name {
+			best = c
+		}
+	}
+	if best == nil {
+		return "", false
+	}
+	return best.Name, true
+}
+
+// pickTimeColumn picks a Date32 column to order a trend's time series by.
+func pickTimeColumn(columns []columnStat) (string, bool) {
+	var best *columnStat
+	for i := range columns {
+		c := &columns[i]
+		if c.DataType != "Date32" || c.NullRate >= maxPickNullRate {
+			continue
+		}
+		if best == nil || c.Name < best.Name {
+			best = c
+		}
+	}
+	if best == nil {
+		return "", false
+	}
+	return best.Name, true
+}
+
+// outlierValueAlias is the aggregate's output column name in both the
+// outlier and trend queries below — passed straight through as
+// AnalyzeRequest.value_column, so atlas_insights never needs to know the
+// dataset's own column name for whatever got aggregated.
+const outlierValueAlias = "value"
+
+func outlierQuerySQL(groupCol, valueCol string) string {
+	return fmt.Sprintf("SELECT %q, AVG(%q) AS %q FROM t GROUP BY %q", groupCol, valueCol, outlierValueAlias, groupCol)
+}
+
+func trendQuerySQL(timeCol, valueCol string) string {
+	return fmt.Sprintf("SELECT %q, AVG(%q) AS %q FROM t GROUP BY %q ORDER BY %q", timeCol, valueCol, outlierValueAlias, timeCol, timeCol)
+}
+
+// runOutlierAnalyze runs the heuristically-built group/value aggregate
+// through the unmodified engine, then asks the worker's Analyze RPC to
+// z-score it. Errors are the caller's to treat as best-effort (a bad column
+// pick, e.g. one that produces too few groups, shouldn't fail the whole
+// /insights response) — see handleInsights.
+func (s *Server) runOutlierAnalyze(ctx context.Context, dq *datasetQuery, groupCol, valueCol string) (json.RawMessage, error) {
+	compiled, err := s.coordinator.Compile(ctx, outlierQuerySQL(groupCol, valueCol), dq.dataset.GetSchemaJson())
+	if err != nil {
+		return nil, fmt.Errorf("compiling outlier query: %w", err)
+	}
+	result, err := s.coordinator.RunCompiled(ctx, compiled, toSchedulerManifests(dq.manifests))
+	if err != nil {
+		return nil, fmt.Errorf("running outlier query: %w", err)
+	}
+	if len(result.ArrowIPCBatches) != 1 {
+		return nil, fmt.Errorf("outlier query: expected exactly 1 combined batch, got %d", len(result.ArrowIPCBatches))
+	}
+
+	resp, err := s.coordinator.Analyze(ctx, &workerpb.AnalyzeRequest{
+		ArrowIpc:      result.ArrowIPCBatches[0],
+		Kind:          "outlier",
+		GroupByColumn: groupCol,
+		ValueColumn:   outlierValueAlias,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("analyzing outliers: %w", err)
+	}
+	return json.RawMessage(resp.GetFindingsJson()), nil
+}
+
+// runTrendAnalyze mirrors runOutlierAnalyze for a time-ordered aggregate.
+func (s *Server) runTrendAnalyze(ctx context.Context, dq *datasetQuery, timeCol, valueCol string) (json.RawMessage, error) {
+	compiled, err := s.coordinator.Compile(ctx, trendQuerySQL(timeCol, valueCol), dq.dataset.GetSchemaJson())
+	if err != nil {
+		return nil, fmt.Errorf("compiling trend query: %w", err)
+	}
+	result, err := s.coordinator.RunCompiled(ctx, compiled, toSchedulerManifests(dq.manifests))
+	if err != nil {
+		return nil, fmt.Errorf("running trend query: %w", err)
+	}
+	if len(result.ArrowIPCBatches) != 1 {
+		return nil, fmt.Errorf("trend query: expected exactly 1 combined batch, got %d", len(result.ArrowIPCBatches))
+	}
+
+	resp, err := s.coordinator.Analyze(ctx, &workerpb.AnalyzeRequest{
+		ArrowIpc:    result.ArrowIPCBatches[0],
+		Kind:        "trend",
+		TimeColumn:  timeCol,
+		ValueColumn: outlierValueAlias,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("analyzing trend: %w", err)
+	}
+	return json.RawMessage(resp.GetFindingsJson()), nil
+}
+
 // countQuerySQL builds `SELECT COUNT(*) AS total_rows, COUNT("col") AS
 // "col_non_null", ... FROM t` — the one aggregate query
 // atlas_insights::build_summary expects (its own doc comment names this
@@ -207,18 +369,25 @@ func (s *Server) handleSummary(w http.ResponseWriter, r *http.Request) {
 type insightsResponse struct {
 	Summary            json.RawMessage `json:"summary"`
 	QualityFindings    json.RawMessage `json:"quality_findings"`
+	OutlierFindings    json.RawMessage `json:"outlier_findings,omitempty"`
+	TrendFinding       json.RawMessage `json:"trend_finding,omitempty"`
 	Narrative          string          `json:"narrative"`
 	SuggestedQuestions []string        `json:"suggested_questions"`
 }
 
 // handleInsights orchestrates Phase 7's AI Analyst pipeline: engine summary
-// (buildSummary) -> engine quality checks (Analyze kind="quality") ->
-// AIService.NarrateFindings -> AIService.SuggestQuestions
-// (docs/atlas-implementation-spec.md Phase 7, task 4). Outlier and trend
-// detection (also implemented in atlas-insights) aren't wired in here yet —
-// both need a group/value/time column choice this fixed, dataset-agnostic
-// pipeline has no principled way to make, unlike null-rate/zero-variance/
-// duplicate checks, which apply uniformly to every column.
+// (buildSummary) -> engine quality checks (Analyze kind="quality") -> engine
+// outlier/trend checks over heuristically-picked columns (Analyze
+// kind="outlier"/"trend") -> AIService.NarrateFindings ->
+// AIService.SuggestQuestions (docs/atlas-implementation-spec.md Phase 7,
+// task 4). Outlier/trend detection is best-effort: pickGroupColumn/
+// pickValueColumn/pickTimeColumn apply a fixed, dataset-agnostic heuristic
+// (a low-cardinality string column for grouping, a non-constant numeric
+// column for the value, a Date32 column for the time axis) that won't
+// always find a candidate — when it doesn't, or the resulting query
+// produces no finding, that section is simply omitted rather than failing
+// the whole response, unlike null-rate/zero-variance/duplicate checks,
+// which apply uniformly to every column and can't fail this way.
 func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {
@@ -264,10 +433,36 @@ func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	findingsForNarration, err := json.Marshal(map[string]json.RawMessage{
+	var columns []columnStat
+	_ = json.Unmarshal([]byte(columnsJSON), &columns)
+
+	var outlierFindingsJSON, trendFindingJSON json.RawMessage
+	if groupCol, ok := pickGroupColumn(columns); ok {
+		if valueCol, ok := pickValueColumn(columns); ok {
+			if findings, err := s.runOutlierAnalyze(ctx, dq, groupCol, valueCol); err == nil {
+				outlierFindingsJSON = findings
+			}
+		}
+	}
+	if timeCol, ok := pickTimeColumn(columns); ok {
+		if valueCol, ok := pickValueColumn(columns); ok {
+			if finding, err := s.runTrendAnalyze(ctx, dq, timeCol, valueCol); err == nil {
+				trendFindingJSON = finding
+			}
+		}
+	}
+
+	findingsMap := map[string]json.RawMessage{
 		"summary":          json.RawMessage(summaryJSON),
 		"quality_findings": json.RawMessage(qualityResp.GetFindingsJson()),
-	})
+	}
+	if outlierFindingsJSON != nil {
+		findingsMap["outlier_findings"] = outlierFindingsJSON
+	}
+	if trendFindingJSON != nil {
+		findingsMap["trend_finding"] = trendFindingJSON
+	}
+	findingsForNarration, err := json.Marshal(findingsMap)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -291,6 +486,8 @@ func (s *Server) handleInsights(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, insightsResponse{
 		Summary:            json.RawMessage(summaryJSON),
 		QualityFindings:    json.RawMessage(qualityResp.GetFindingsJson()),
+		OutlierFindings:    outlierFindingsJSON,
+		TrendFinding:       trendFindingJSON,
 		Narrative:          narrateResp.GetNarrative(),
 		SuggestedQuestions: suggestResp.GetQuestions(),
 	})
