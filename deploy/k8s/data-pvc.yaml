@@ -1,0 +1,30 @@
+# Shared `.atlas`/Parquet/Iceberg/Delta file storage, mounted at /data on
+# every worker pod -- the k8s equivalent of docker-compose.yml's `./data`
+# bind mount, which is what lets every worker read files that a given
+# manifest's file_path points at regardless of which node ingested them.
+#
+# atlas-cli's ingest path only writes to a local filesystem directory
+# (--data-dir; see engine/crates/atlas-cli) -- there's no S3/MinIO endpoint
+# flag wired up yet, even though atlas-storage's object_store abstraction
+# supports it. That means this PVC's StorageClass MUST support
+# ReadWriteMany (NFS, AWS EFS, GCP Filestore, Azure Files, Longhorn, etc.)
+# so all 3 worker pods can see the same files -- a default ReadWriteOnce
+# StorageClass will only bind to one pod. Override `storageClassName` below
+# for your cluster (or drop it to use whatever RWX default class exists).
+#
+# To ingest into a running cluster: run atlas-cli from a Pod that mounts
+# this same PVC at /data (e.g. `kubectl run atlas-cli --rm -it --image
+# <your atlas-cli build> -n atlas --overrides='{"spec":{"containers":[{"name":"atlas-cli","image":"...","volumeMounts":[{"name":"data","mountPath":"/data"}]}],"volumes":[{"name":"data","persistentVolumeClaim":{"claimName":"atlas-data"}}]}}' -- ingest --file patients.csv --dataset patients --data-dir /data --catalog-addr catalog:9091`),
+# then run `atlas-cli query` the same way, or through the coordinator's
+# REST API from outside the cluster (`kubectl port-forward svc/coordinator 8080:8080`).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: atlas-data
+  namespace: atlas
+spec:
+  accessModes: ["ReadWriteMany"]
+  # storageClassName: nfs-client   # uncomment and set to an RWX-capable class for your cluster
+  resources:
+    requests:
+      storage: 50Gi

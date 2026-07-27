@@ -1,0 +1,32 @@
+# Non-secret configuration shared across services -- the k8s equivalent of
+# deploy/docker-compose.yml's per-service `environment:` blocks, using
+# Service DNS names (`<service>.atlas.svc.cluster.local`, or just
+# `<service>` since every consumer runs in the same `atlas` namespace)
+# instead of compose's service-name networking.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: atlas-config
+  namespace: atlas
+data:
+  DATABASE_URL: "postgres://atlas:atlas@postgres:5432/atlas"
+  CATALOG_ADDR: "catalog:9091"
+  CATALOG_METRICS_ADDR: ":9095"
+  AI_SERVICE_ADDR: "ai-service:9092"
+  AI_SERVICE_METRICS_PORT: "9096"
+  COORDINATOR_ADDR: ":8080"
+  COORDINATOR_URL: "http://coordinator:8080"
+  ATLAS_COORDINATOR_URL: "http://coordinator:8080"
+  # Distinct, individually-addressable per-pod DNS names from the `worker`
+  # StatefulSet's headless service (worker.yaml) -- same reasoning as
+  # docker-compose.yml's three explicit worker services: a Deployment's
+  # shared DNS name would round-robin and defeat per-worker heartbeat
+  # tracking (coordinator/internal/scheduler.Registry).
+  WORKER_ADDRS: "worker-0.worker:9100,worker-1.worker:9100,worker-2.worker:9100"
+  REDIS_URL: "redis://redis:6379"
+  ATLAS_LLM_PROVIDER: "ollama"
+  ATLAS_LLM_MODEL: "llama3"
+  OLLAMA_API_BASE: "http://ollama:11434"
+  ATLAS_EMBEDDING_PROVIDER: "ollama"
+  ATLAS_EMBEDDING_MODEL: "nomic-embed-text"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4317"

@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-service
+  namespace: atlas
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: ai-service }
+  template:
+    metadata:
+      labels: { app: ai-service }
+    spec:
+      containers:
+        - name: ai-service
+          image: atlas/ai-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 9092
+            - containerPort: 9096
+          envFrom:
+            - configMapRef: { name: atlas-config }
+          env:
+            # atlas-config's AI_SERVICE_ADDR ("ai-service:9092") is what the
+            # *coordinator* dials to reach this service -- this container
+            # needs the same env var name to mean its own bind address
+            # instead, so it's overridden here (an `env:` entry wins over
+            # the same key coming from `envFrom`).
+            - name: AI_SERVICE_ADDR
+              value: "0.0.0.0:9092"
+          readinessProbe:
+            httpGet: { path: /metrics, port: 9096 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /metrics, port: 9096 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits: { cpu: "1", memory: "1Gi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-service
+  namespace: atlas
+spec:
+  selector: { app: ai-service }
+  ports:
+    - name: grpc
+      port: 9092
+      targetPort: 9092
+    - name: metrics
+      port: 9096
+      targetPort: 9096

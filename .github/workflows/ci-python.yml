@@ -4,12 +4,14 @@ on:
   pull_request:
     paths:
       - "ai-service/**"
+      - "sdk/python/**"
       - "proto/ai.proto"
       - ".github/workflows/ci-python.yml"
   push:
     branches: [main]
     paths:
       - "ai-service/**"
+      - "sdk/python/**"
       - "proto/ai.proto"
       - ".github/workflows/ci-python.yml"
 
@@ -30,5 +32,22 @@ jobs:
       # Mocked-provider golden tests only — no API keys or a local Ollama
       # instance in CI, per docs/atlas-implementation-spec.md Phase 6 task 6.
       # The real-provider pass (ATLAS_AI_INTEGRATION=1) is not run here.
+      - name: test
+        run: uv run pytest
+
+  sdk-python:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install
+        run: uv sync
+      # Runs entirely against httpx.MockTransport -- no live coordinator.
       - name: test
         run: uv run pytest

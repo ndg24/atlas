@@ -1,0 +1,33 @@
+# Optional: external HTTP access to the dashboard, once an ingress
+# controller (nginx, traefik, etc.) is installed in the cluster. Without
+# one, use `kubectl port-forward` (see README.md) instead -- this file is
+# included in kustomization.yaml but harmless to delete if you don't run an
+# ingress controller.
+#
+# The dashboard is the intended single entry point (its server-side proxy,
+# dashboard/app/api/atlas, already forwards to the coordinator and holds
+# the bearer token, so the browser never needs direct coordinator access).
+# A script or the Python SDK talking to the coordinator's REST API
+# directly from outside the cluster should use
+# `kubectl port-forward svc/coordinator 8080:8080 -n atlas` rather than a
+# second Ingress host -- exposing the coordinator publicly means exposing
+# /auth/signup and /auth/login publicly too, which is a deliberate choice
+# to make per-deployment, not a sane default.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: atlas-dashboard
+  namespace: atlas
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: atlas.local # replace with your real hostname
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: dashboard
+                port:
+                  number: 3000

@@ -1,0 +1,44 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: atlas
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secret.yaml
+  - postgres.yaml
+  - minio.yaml
+  - redis.yaml
+  - ollama.yaml
+  - data-pvc.yaml
+  - catalog.yaml
+  - worker.yaml
+  - coordinator.yaml
+  - ai-service.yaml
+  - dashboard.yaml
+  - jaeger.yaml
+  - prometheus.yaml
+  - ingress.yaml
+
+# Point these at your own registry (e.g. `ghcr.io/<you>/atlas-coordinator`)
+# once you've built and pushed images from the repo-root Dockerfiles
+# (coordinator/Dockerfile builds both `coordinator` and `catalog`;
+# engine/Dockerfile builds `worker`; ai-service/Dockerfile and
+# dashboard/Dockerfile build themselves) -- see README.md. Left as
+# `atlas/*:latest` with imagePullPolicy: IfNotPresent by default so a local
+# cluster (kind/minikube/k3d) that already has the images loaded works with
+# no edits.
+images:
+  - name: atlas/coordinator
+    newName: atlas/coordinator
+    newTag: latest
+  - name: atlas/worker
+    newName: atlas/worker
+    newTag: latest
+  - name: atlas/ai-service
+    newName: atlas/ai-service
+    newTag: latest
+  - name: atlas/dashboard
+    newName: atlas/dashboard
+    newTag: latest

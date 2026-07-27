@@ -4,7 +4,7 @@ A distributed analytics engine that turns SQL, natural language, and open-ended 
 
 ## Overview
 
-Data gets ingested into Atlas's own `.atlas` columnar format (or Parquet), split into Hive-style partitions, and registered as an immutable snapshot in a Postgres-backed catalog. A query — whether it arrives as SQL, natural language, or a multi-step research question — is compiled into the same `LogicalPlan` protobuf before it touches anything else. A rule-based optimizer rewrites that plan (column pruning, predicate and partition pushdown, cache lookup), the Go coordinator fans the resulting tasks out across a fleet of Rust worker processes over gRPC, and workers stream Arrow IPC batches back to be merged — a two-phase combine for aggregates, a k-way merge for sorts. Results come back through a REST API to the CLI, SDKs, or the dashboard, optionally narrated in plain English or bundled into a research report that cites structured results and retrieved literature separately. No layer downstream of the logical plan cares whether a query started as SQL or a sentence.
+Data gets ingested into Atlas's own `.atlas` columnar format (or Parquet), split into Hive-style partitions, and registered as an immutable snapshot in a Postgres-backed catalog. A query — whether it arrives as SQL, natural language, or a multi-step research question — is compiled into the same `LogicalPlan` protobuf before it touches anything else. A rule-based optimizer rewrites that plan (column pruning, predicate and partition pushdown, cache lookup), the Go coordinator fans the resulting tasks out across a fleet of Rust worker processes over gRPC, and workers stream Arrow IPC batches back to be merged — a two-phase combine for aggregates, a k-way merge for sorts. Results come back through a REST API to the CLI, the Python SDK, or the dashboard, optionally narrated in plain English or bundled into a research report that cites structured results and retrieved literature separately. No layer downstream of the logical plan cares whether a query started as SQL or a sentence.
 
 ## Features
 
@@ -43,7 +43,7 @@ Data gets ingested into Atlas's own `.atlas` columnar format (or Parquet), split
 | AI service (Python) | Python 3.11+, `litellm` (Anthropic/OpenAI/Gemini/Ollama behind one adapter), `grpc.aio`, `pyarrow`, `pgvector`, Pydantic, `opentelemetry-sdk` + `prometheus-client` (tracing/metrics) |
 | Metadata, cache & retrieval | Postgres (catalog: datasets/snapshots/manifests/query_history), Redis (result cache), `pgvector` (literature embeddings) |
 | Dashboard | Next.js, Node 20+ |
-| SDK / CLI | Go CLI (`sdk/cli`, thin client over the generated proto/REST contract), Python SDK (`sdk/python`) |
+| SDK / CLI | `atlas-cli` (`engine/crates/atlas-cli`, Rust — `ingest`/`ingest-iceberg`/`ingest-delta` over a `tonic`-generated `CatalogService` gRPC client, `query`/`explain` as a REST client against the coordinator), Python SDK (`sdk/python`'s `atlas_sdk.AtlasClient`, a thin REST client over the same coordinator API — `query`/`query_nl`/`explain`/`summary`/`insights`/`research`, decoding Arrow IPC results to `pyarrow`/`pandas`) |
 | Contracts | Protobuf (`proto/plan.proto`, `format.proto`, `catalog.proto`, `worker.proto`, `ai.proto`) — source of truth for cross-language types, codegen via `prost` (Rust), `protoc-gen-go` (Go), `grpcio-tools` (Python) |
 | Infra | Docker Compose (Postgres, MinIO, Redis, coordinator, N workers, Ollama), Kubernetes manifests (`deploy/k8s`) for production |
 | Observability & auth | OpenTelemetry (trace propagation from REST → catalog gRPC → worker gRPC → AI-service gRPC, all via a `traceparent` header riding in gRPC metadata, opt-in via `OTEL_EXPORTER_OTLP_ENDPOINT`), Prometheus per component (`golang-jwt/jwt`, `client_golang` on the Go side; `metrics`/`metrics-exporter-prometheus` on the Rust side; `opentelemetry`/`prometheus-client` on the Python side), JWT auth with enforced per-workspace scoping (`datasets.workspace_id`) and a signup/login flow (`internal/accounts`, bcrypt) alongside the dev `tokengen` CLI |
@@ -86,11 +86,13 @@ ai-service/          # Python: LLM abstraction, NL→plan (Phase 6), AI analyst 
 proto/               # shared .proto contracts: plan, format, catalog, worker, ai
 dashboard/           # Next.js frontend: query console, plan viewer, insights, research reports, login
 sdk/
-  python/
-  cli/               # Go CLI, reuses the generated proto client
+  python/            # atlas_sdk: AtlasClient over the coordinator REST API (the CLI itself lives in
+                      # engine/crates/atlas-cli -- Rust, built directly against the engine's own
+                      # Arrow/plan types, not a second generated-client package here)
 deploy/
   docker-compose.yml
-  k8s/
+  k8s/                # kustomize base: same services as docker-compose.yml, coordinator/dashboard
+                      # scaled to 2 replicas, workers as a StatefulSet for stable per-pod addressing
 docs/                # architecture plan + implementation spec
 ```
 
@@ -189,6 +191,16 @@ curl -X POST localhost:8080/research -H "Authorization: Bearer $ATLAS_TOKEN" -d 
 (cd dashboard && npm run dev)   # http://localhost:3000
 ```
 
+Everything above also works from a notebook via the Python SDK (`sdk/python`), instead of `curl`/`atlas-cli`:
+
+```python
+from atlas_sdk import AtlasClient
+
+client = AtlasClient("http://localhost:8080")
+client.login("you@example.com", "your-password")
+df = client.query("patients", "SELECT diagnosis, COUNT(*) AS n FROM t GROUP BY diagnosis ORDER BY n DESC").to_pandas()
+```
+
 ## Testing
 
 ```
@@ -202,22 +214,23 @@ cargo test --workspace --manifest-path engine/Cargo.toml
 
 # Python
 (cd ai-service && pytest)
+(cd sdk/python && uv sync && uv run pytest)
 ```
 
 - **Rust**: unit tests per crate (schema inference, format round-trips, per-operator execution, optimizer rules) plus Criterion benchmarks that assert pruning reduces bytes actually read, not just wall-clock time. `atlas-format`'s Iceberg and Delta readers are each tested against a real table fixture (`engine/crates/atlas-format/tests/fixtures/iceberg_sample`/`delta_sample`, generated by PyIceberg/the Python `deltalake` package respectively — independent writers, not Atlas's own) asserting schema translation, per-partition row counts, and column-stats bytes decode correctly; the worker crate separately proves manifests tagged `format = "iceberg"` and `format = "delta"` both dispatch to the Parquet reader and execute a real query over it.
 - **Go**: `testcontainers-go` spins up a real Postgres for catalog/scheduler/auth tests — snapshot chaining, transactional commits, partition pruning against real manifests, workspace-scoped datasets being invisible across workspaces, a signup-then-login round trip minting valid tokens, and a worker-killed-mid-query fault-tolerance test.
 - **Python**: golden-file structural tests for NL→plan (assert correct node types/columns/aggregates, not exact LLM text) against a mocked provider by default, with real multi-provider runs (including Ollama) gated behind an integration-test flag; insight and suggested-question tests assert every suggested question compiles to a valid plan and every narrated number traces back to a supplied finding. Each research-pipeline agent (`ai-service/tests/agents/`) is unit-tested in isolation against a mocked provider and a fake coordinator query-runner (no live LLM, no real HTTP); two end-to-end pipeline tests assert the final report's `[data]`-tagged claim traces to an actual query result row, and — with both a structured and a literature sub-question in play — that a single report can carry both `[data]`- and `[literature:doc_id]`-tagged claims together, each traceable to its actual source. Retrieval (`ai-service/tests/retrieval/`) unit-tests chunking and the litellm-backed embedding adapter against a mocked `litellm.embedding`; a real Postgres+pgvector round trip (ingest then nearest-neighbor search) is gated behind the same integration-test flag as the LLM provider tests, since it needs a live corpus_documents table. Telemetry (`ai-service/tests/test_telemetry.py`) asserts a span is parented under an incoming `traceparent` gRPC-metadata header when present (a fresh root when it's absent) using an in-memory span exporter, and that a wrapped LLM call actually moves the latency/count/token Prometheus counters — no live OTLP collector or LLM call needed for either.
 - **Cross-service**: an integration test ingests a partitioned dataset and runs a `GROUP BY` through the full coordinator → N-worker → merge path, asserting the distributed result exactly matches a known-correct single-node baseline.
-- **CI**: one workflow per language (`ci-rust.yml`, `ci-go.yml`, `ci-python.yml`, `ci-node.yml` for the dashboard), each running lint + unit tests + build on every PR touching its directory.
+- **Python SDK** (`sdk/python`): `AtlasClient` is tested entirely against `httpx.MockTransport` — auth-token handling (signup/login store it, an unauthenticated call without one fails before any request is sent), every route's request shape, `AtlasError` on non-2xx responses, and `QueryResult.to_table()`/`.to_pandas()` decoding real Arrow IPC bytes round-tripped through `pyarrow` — no live coordinator required.
+- **CI**: one workflow per language (`ci-rust.yml`, `ci-go.yml`, `ci-python.yml` — which runs both `ai-service` and `sdk/python` as separate jobs, `ci-node.yml` for the dashboard), each running lint + unit tests + build on every PR touching its directory.
 
 ## Deployment
 
-`deploy/docker-compose.yml` runs the full stack locally: Postgres, MinIO, Redis, the catalog service, the coordinator, 3 workers, Ollama, the AI service, the dashboard, and — for the auth/observability work described above — Jaeger (trace UI) and Prometheus (metrics scrape, config in `deploy/prometheus.yml`). `deploy/k8s/` holds the equivalent Kubernetes manifests for production, scaling workers and the coordinator independently.
+`deploy/docker-compose.yml` runs the full stack locally: Postgres, MinIO, Redis, the catalog service, the coordinator, 3 workers, Ollama, the AI service, the dashboard, and — for the auth/observability work described above — Jaeger (trace UI) and Prometheus (metrics scrape, config in `deploy/prometheus.yml`). `deploy/k8s/` is a `kustomize` base with the same services for a real cluster (`kubectl apply -k deploy/k8s`) — the coordinator and dashboard run as 2-replica `Deployment`s (both are stateless; state lives in Postgres/Redis), while the 3 workers run as a `StatefulSet` behind a headless `Service` so the coordinator's worker registry keeps 3 distinct, individually heartbeat-tracked addresses instead of one round-robin DNS name. See `deploy/k8s/README.md` for image build/push, the `ReadWriteMany`-storage requirement for shared `.atlas`-file access across workers, and secrets setup.
 
 | Service | Protocol | Default port |
 |---|---|---|
 | Coordinator (REST) | HTTP/JSON | 8080 |
-| Coordinator (internal) | gRPC | 9090 |
 | Catalog service | gRPC | 9091 |
 | Catalog metrics (`/metrics`) | HTTP | 9095 |
 | Worker | gRPC | 9100+ (one per worker) |

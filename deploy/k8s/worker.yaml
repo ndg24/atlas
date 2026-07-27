@@ -1,0 +1,70 @@
+# A StatefulSet (not a Deployment) precisely because the coordinator's
+# WORKER_ADDRS needs 3 distinct, individually heartbeat-tracked addresses
+# (coordinator/internal/scheduler.Registry) -- a Deployment scaled to 3
+# replicas would sit behind one round-robin-DNS Service name, which is
+# exactly what docker-compose.yml's own comment on worker-1/2/3 explains
+# defeats per-worker liveness tracking. The headless Service below gives
+# each pod a stable, individually resolvable name:
+# worker-0.worker.atlas.svc.cluster.local, worker-1..., worker-2... (short
+# form worker-0.worker, etc., from within the atlas namespace).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: worker
+  namespace: atlas
+spec:
+  serviceName: worker
+  replicas: 3
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels: { app: worker }
+  template:
+    metadata:
+      labels: { app: worker }
+    spec:
+      containers:
+        - name: worker
+          image: atlas/worker:latest
+          imagePullPolicy: IfNotPresent
+          args: ["--addr", "0.0.0.0:9100", "--metrics-addr", "0.0.0.0:9101"]
+          ports:
+            - containerPort: 9100
+            - containerPort: 9101
+          envFrom:
+            - configMapRef: { name: atlas-config }
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet: { path: /metrics, port: 9101 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /metrics, port: 9101 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits: { cpu: "1", memory: "2Gi" }
+      # A single shared RWX volume (see data-pvc.yaml), not
+      # volumeClaimTemplates -- every worker must be able to read every
+      # manifest's file_path, not just the files it wrote itself.
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: atlas-data }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: worker
+  namespace: atlas
+spec:
+  clusterIP: None # headless -- stable per-pod DNS names, see comment above
+  selector: { app: worker }
+  ports:
+    - name: grpc
+      port: 9100
+      targetPort: 9100
+    - name: metrics
+      port: 9101
+      targetPort: 9101

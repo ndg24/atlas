@@ -1,0 +1,55 @@
+# Same image as coordinator.yaml (coordinator/Dockerfile builds both
+# `coordinator` and `catalog` binaries into one image; docker-compose.yml
+# picks which one runs via `entrypoint:`, mirrored here via `command:`) --
+# kept as its own Deployment because the catalog is passive metadata
+# storage while the coordinator is an active scheduler, per the
+# architecture doc's explicit separation.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog
+  namespace: atlas
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: catalog }
+  template:
+    metadata:
+      labels: { app: catalog }
+    spec:
+      containers:
+        - name: catalog
+          image: atlas/coordinator:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/local/bin/catalog"]
+          ports:
+            - containerPort: 9091
+            - containerPort: 9095
+          envFrom:
+            - configMapRef: { name: atlas-config }
+          readinessProbe:
+            httpGet: { path: /metrics, port: 9095 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /metrics, port: 9095 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalog
+  namespace: atlas
+spec:
+  selector: { app: catalog }
+  ports:
+    - name: grpc
+      port: 9091
+      targetPort: 9091
+    - name: metrics
+      port: 9095
+      targetPort: 9095

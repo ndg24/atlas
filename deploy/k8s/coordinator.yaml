@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coordinator
+  namespace: atlas
+spec:
+  # Stateless REST layer (all state lives in Postgres/Redis) -- safe to run
+  # more than one replica, unlike the worker StatefulSet.
+  replicas: 2
+  selector:
+    matchLabels: { app: coordinator }
+  template:
+    metadata:
+      labels: { app: coordinator }
+    spec:
+      containers:
+        - name: coordinator
+          image: atlas/coordinator:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/local/bin/coordinator"]
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef: { name: atlas-config }
+          env:
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef: { name: atlas-secrets, key: JWT_SECRET }
+          readinessProbe:
+            httpGet: { path: /metrics, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /metrics, port: 8080 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coordinator
+  namespace: atlas
+spec:
+  selector: { app: coordinator }
+  ports:
+    - port: 8080
+      targetPort: 8080

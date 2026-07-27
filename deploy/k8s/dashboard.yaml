@@ -1,0 +1,51 @@
+# The dashboard's server-side proxy (dashboard/app/api/atlas) holds the
+# bearer token and forwards to the coordinator -- the browser never talks
+# to the coordinator Service directly. ATLAS_TOKEN is optional: sign up at
+# /login once this is reachable and its session cookie is all you need;
+# set it only for a token not tied to a login session.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard
+  namespace: atlas
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: dashboard }
+  template:
+    metadata:
+      labels: { app: dashboard }
+    spec:
+      containers:
+        - name: dashboard
+          image: atlas/dashboard:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef: { name: atlas-config }
+          env:
+            - name: ATLAS_TOKEN
+              value: ""
+          readinessProbe:
+            httpGet: { path: /login, port: 3000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /login, port: 3000 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard
+  namespace: atlas
+spec:
+  selector: { app: dashboard }
+  ports:
+    - port: 3000
+      targetPort: 3000
